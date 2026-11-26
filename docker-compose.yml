@@ -1,0 +1,42 @@
+# Local development: Postgres for the API and the test suite.
+#   docker compose up -d db
+# Full stack (built image, demo data):
+#   docker compose up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: accord
+      POSTGRES_PASSWORD: accord
+      POSTGRES_DB: accord
+    ports:
+      - "5433:5432"
+    volumes:
+      - accord-db:/var/lib/postgresql/data
+      - ./backend/scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U accord"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    profiles: ["app"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ACCORD_ENVIRONMENT: demo
+      ACCORD_DEMO_MODE: "true"
+      ACCORD_DATABASE_URL: postgresql+psycopg://accord:accord@db:5432/accord
+      ACCORD_SESSION_SECRET: local-dev-only-not-a-secret
+      ACCORD_BASE_URL: http://localhost:8080
+      ACCORD_COOKIE_SECURE: "false"
+      ACCORD_SEED_DEMO_DATA: "true"
+      ACCORD_JOB_TOKEN: local-job-token
+    ports:
+      - "8080:8080"
+
+volumes:
+  accord-db:
