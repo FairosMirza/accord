@@ -123,7 +123,8 @@ DEFAULT_POLICY = PolicyDocument(
 def current_policy(db: Session) -> tuple[PolicyVersion, PolicyDocument]:
     pv = db.execute(select(PolicyVersion).order_by(PolicyVersion.version.desc()).limit(1)).scalar()
     if pv is None:
-        pv = ensure_policy(db)
+        # Created at start-up by ensure_policy; never implicitly here, so history can't be pre-empted.
+        raise DomainError("Approval rules aren't set up yet. Try again in a minute.", "policy_missing")
     return pv, PolicyDocument.model_validate(pv.document)
 
 

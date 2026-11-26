@@ -25,7 +25,8 @@ import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react
 import { api } from "../api/client";
 import { useMe, useNotifications, usePersonas } from "../api/hooks";
 import type { Me, UserBrief } from "../api/types";
-import { ago, date, firstName, ROLE_NAMES } from "../lib/format";
+import { ago, date, ROLE_NAMES } from "../lib/format";
+import { useSignOut } from "../lib/session";
 import { Logo } from "./Logo";
 import { Avatar, ButtonLink, Empty, Input, Modal, PageLoader, Spinner } from "./ui";
 
@@ -75,16 +76,6 @@ function SideLink({ item, onClick }: { item: NavItem; onClick?: () => void }) {
   );
 }
 
-export function useSignOut() {
-  const qc = useQueryClient();
-  const navigate = useNavigate();
-  return async () => {
-    await api.post("/api/auth/logout").catch(() => undefined);
-    qc.clear();
-    navigate("/signin");
-  };
-}
-
 export function PersonaPicker({ open, onClose, currentId }: { open: boolean; onClose: () => void; currentId?: number }) {
   const { data: personas } = usePersonas(open);
   const [q, setQ] = useState("");
@@ -93,14 +84,13 @@ export function PersonaPicker({ open, onClose, currentId }: { open: boolean; onC
   const qc = useQueryClient();
   const navigate = useNavigate();
 
+  const searching = open && q.trim().length >= 2;
   useEffect(() => {
-    if (!open || q.trim().length < 2) {
-      setPeople([]);
-      return;
-    }
+    if (!searching) return;
     const t = setTimeout(() => api.get<UserBrief[]>(`/api/auth/people?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])), 200);
     return () => clearTimeout(t);
-  }, [q, open]);
+  }, [q, searching]);
+  const results = searching ? people : [];
 
   const signInAs = async (id: number) => {
     setBusy(id);
@@ -140,9 +130,9 @@ export function PersonaPicker({ open, onClose, currentId }: { open: boolean; onC
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Or find anyone in the company…" className="pl-9" />
         </div>
-        {people.length > 0 && (
+        {results.length > 0 && (
           <div className="mt-2 divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-200">
-            {people.map((u) => (
+            {results.map((u) => (
               <button key={u.id} type="button" onClick={() => signInAs(u.id)} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-50">
                 <Avatar name={u.name} initials={u.initials} size="sm" />
                 <span className="min-w-0 flex-1 truncate text-[14px]">
@@ -239,7 +229,6 @@ export default function Layout() {
   const signOut = useSignOut();
   const location = useLocation();
   useEffect(() => {
-    setMenuOpen(false);
     window.scrollTo({ top: 0 });
   }, [location.pathname]);
   const nav = useMemo(() => (me ? navFor(me) : null), [me]);
@@ -352,9 +341,4 @@ function BottomLink({ to, icon, label, count, end }: { to: string; icon: ReactNo
       <span className="text-[11px] font-medium">{label}</span>
     </NavLink>
   );
-}
-
-export function useGreeting(name: string) {
-  const h = new Date().getHours();
-  return `${h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"}, ${firstName(name)}`;
 }

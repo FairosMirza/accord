@@ -1,23 +1,25 @@
 import { ArrowRight, CalendarClock, CheckCircle2, Inbox, Plus } from "lucide-react";
 import { Link } from "react-router";
 import { useDashboard, useMe } from "../api/hooks";
-import { useGreeting } from "../components/Layout";
 import { HBars, QuickDecision, RequestRow, TrendChart } from "../components/requests";
 import { ButtonLink, Card, CardHeader, Empty, ErrorNote, PageLoader, Stat } from "../components/ui";
+import { useState } from "react";
 import { date, GROUP, plural, usd } from "../lib/format";
+import { greeting as greet } from "../lib/session";
 
 const SCOPE_LABEL = { company: "Across Orvane", department: "Your department", team: "Your team", self: "Your requests" };
 
 export default function Home() {
   const { data: me } = useMe();
   const { data, isLoading, error } = useDashboard();
-  const greeting = useGreeting(me?.user.name ?? "");
+  const [hour] = useState(() => new Date().getHours());
+  const greeting = greet(me?.user.name ?? "", hour);
   if (isLoading || !me) return <PageLoader />;
   if (error || !data) return <ErrorNote error={error} />;
   const n = data.numbers;
   const wide = n.scope !== "self";
   const cover = me.my_cover.find((d) => d.state === "active" || d.state === "scheduled");
-  const year = new Date().getFullYear();
+  const year = Number(n.period.today.slice(0, 4));
 
   return (
     <div className="space-y-5">

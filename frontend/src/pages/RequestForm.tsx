@@ -87,27 +87,23 @@ function toPayload(f: FormState) {
 }
 
 function useRoutePreview(form: FormState) {
-  const [preview, setPreview] = useState<RoutePreview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const key = JSON.stringify([form.category_id, form.amount, form.currency, form.payment_type, form.billing_period, form.term_months]);
+  const [result, setResult] = useState<{ key: string; preview: RoutePreview | null }>({ key: "", preview: null });
+  const p = toPayload(form);
+  const body = { category_id: p.category_id, amount: p.amount, currency: p.currency, payment_type: p.payment_type, billing_period: p.billing_period, term_months: p.term_months };
+  const key = JSON.stringify(body);
   useEffect(() => {
-    if (!form.category_id) {
-      setPreview(null);
-      return;
-    }
-    setLoading(true);
+    if (!body.category_id) return;
+    // Debounced: ask the server who would approve, without saving anything.
     const t = setTimeout(() => {
-      const p = toPayload(form);
       api
-        .post<RoutePreview>("/api/requests/preview", { category_id: p.category_id, amount: p.amount, currency: p.currency, payment_type: p.payment_type, billing_period: p.billing_period, term_months: p.term_months })
-        .then(setPreview)
-        .catch(() => setPreview(null))
-        .finally(() => setLoading(false));
+        .post<RoutePreview>("/api/requests/preview", JSON.parse(key))
+        .then((preview) => setResult({ key, preview }))
+        .catch(() => setResult({ key, preview: null }));
     }, 350);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return { preview, loading };
+  }, [key, body.category_id]);
+  if (!body.category_id) return { preview: null, loading: false };
+  return { preview: result.preview, loading: result.key !== key };
 }
 
 export function RoutePreviewCard({ form, preview, loading, lookups }: { form: FormState; preview: RoutePreview | null; loading: boolean; lookups: Lookups }) {
@@ -377,24 +373,25 @@ async function uploadAll(ref: string, files: File[]) {
 
 export default function RequestForm() {
   const { ref } = useParams();
-  const editing = !!ref;
   const { data: existing, isLoading } = useRequest(ref);
   const { data: lookups } = useLookups();
   const { data: me } = useMe();
-  const [form, setForm] = useState<FormState>(EMPTY);
+  if ((ref && isLoading) || !lookups || !me) return <PageLoader />;
+  if (ref && !existing) return <ErrorNote error={new Error("Request not found.")} />;
+  if (existing && !existing.permissions.can_edit) return <ErrorNote error={new Error("This request can't be edited now. Approved requests can be changed with 'Change amount or details'.")} />;
+  return <RequestEditor key={ref ?? "new"} existing={existing} lookups={lookups} canCreateProject={me.capabilities.can_create_projects} />;
+}
+
+function RequestEditor({ existing, lookups, canCreateProject }: { existing?: RequestDetail; lookups: Lookups; canCreateProject: boolean }) {
+  const ref = existing?.ref;
+  const editing = !!existing;
+  // Head office mostly spends in dollars; the sites default to their local currency.
+  const [form, setForm] = useState<FormState>(() => (existing ? fromRequest(existing) : { ...EMPTY, currency: lookups.default_currency === "AED" ? "USD" : lookups.default_currency }));
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState<"draft" | "submit" | null>(null);
   const navigate = useNavigate();
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
   const { preview, loading } = useRoutePreview(form);
-
-  useEffect(() => {
-    if (existing) setForm(fromRequest(existing));
-    else if (lookups && !editing) setForm((f) => ({ ...f, currency: lookups.default_currency === "AED" ? "USD" : lookups.default_currency }));
-  }, [existing, lookups, editing]);
-
-  if ((editing && isLoading) || !lookups || !me) return <PageLoader />;
-  if (editing && existing && !existing.permissions.can_edit) return <ErrorNote error={new Error("This request can't be edited now. Approved requests can be changed with 'Change amount or details'.")} />;
   const category = lookups.categories.find((c) => String(c.id) === form.category_id);
   const quoteRequired = category?.quote_required ?? true;
   const existingDocs = existing?.attachments.filter((a) => a.kind !== "invoice").length ?? 0;
@@ -432,7 +429,7 @@ export default function RequestForm() {
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5">
-          <RequestFields form={form} set={set} lookups={lookups} canCreateProject={me.capabilities.can_create_projects} />
+          <RequestFields form={form} set={set} lookups={lookups} canCreateProject={canCreateProject} />
           <QuoteSection form={form} set={set} files={files} setFiles={setFiles} existing={existingDocs} quoteRequired={quoteRequired} />
         </div>
         <div className="space-y-4">
@@ -457,18 +454,19 @@ export function AmendForm() {
   const { data: r, isLoading } = useRequest(ref);
   const { data: lookups } = useLookups();
   const { data: me } = useMe();
-  const [form, setForm] = useState<FormState>(EMPTY);
+  if (isLoading || !r || !lookups || !me) return <PageLoader />;
+  if (!r.permissions.can_amend) return <ErrorNote error={new Error("Only the requester can change an approved request.")} />;
+  return <AmendEditor key={`${r.ref}-${r.revision}`} r={r} lookups={lookups} canCreateProject={me.capabilities.can_create_projects} />;
+}
+
+function AmendEditor({ r, lookups, canCreateProject }: { r: RequestDetail; lookups: Lookups; canCreateProject: boolean }) {
+  const [form, setForm] = useState<FormState>(() => fromRequest(r));
   const [reason, setReason] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
   const { preview, loading } = useRoutePreview(form);
-  useEffect(() => {
-    if (r) setForm(fromRequest(r));
-  }, [r]);
-  if (isLoading || !r || !lookups || !me) return <PageLoader />;
-  if (!r.permissions.can_amend) return <ErrorNote error={new Error("Only the requester can change an approved request.")} />;
 
   const save = async () => {
     setBusy(true);
@@ -511,7 +509,7 @@ export function AmendForm() {
       </div>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5">
-          <RequestFields form={form} set={set} lookups={lookups} canCreateProject={me.capabilities.can_create_projects} amendment />
+          <RequestFields form={form} set={set} lookups={lookups} canCreateProject={canCreateProject} amendment />
           <Section title="Why is it changing?">
             <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Supplier's revised quote after the site survey" />
           </Section>

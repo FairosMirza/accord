@@ -371,7 +371,7 @@ class Seeder:
             depts[dept].head_id = self.u[key].id
         supervisors = {"Accra": ["efua", "yaw", "akosua"], "Lima": ["mateo", "valentina", "carmen"], "Johannesburg": ["johan", "naledi", "lerato"]}
         for site, (firsts, lasts) in SITE_CREW_NAMES.items():
-            names = self.rng.sample([f"{f} {last}" for f in firsts for last in lasts], 21)
+            names = self.rng.sample([f"{f} {last}" for f in firsts for last in lasts], 24)
             for i, name in enumerate(names):
                 db.add(
                     User(
@@ -604,7 +604,7 @@ class Seeder:
             h = self.request(who, title, tpl.category, tpl.supplier, amount, currency, submitted, description=tpl.description, project=tpl.project, recurring=tpl.recurring, no_quote=no_quote)
             roll = self.rng.random()
             age_days = (self.now.date() - d).days
-            if roll < 0.08:
+            if roll < 0.1:
                 reason = self.rng.choice(list(REJECTION_COMMENTS))
                 t = self.workday_after(submitted, self.rng.uniform(1, 12))
                 if self.rng.random() < 0.5:
@@ -612,10 +612,10 @@ class Seeder:
                     t = self.workday_after(t, self.rng.uniform(1, 12))
                 self.decide(h, t, "reject", reason=reason, comment=REJECTION_COMMENTS[reason] if self.rng.random() < 0.7 else None)
                 continue
-            if roll < 0.12:
+            if roll < 0.13:
                 self.later(h, self.workday_after(submitted, self.rng.uniform(0.5, 6)), lambda r: workflow.withdraw(self.db, r.requester, r, CLIENT) if r.status == RequestStatus.PENDING else None)
                 continue
-            if roll < 0.17:
+            if roll < 0.18:
                 t = self.workday_after(submitted, self.rng.uniform(1, 8))
                 self.decide(h, t, "return", comment=self.rng.choice(["Which project is this for?", "Can you attach the updated quote?", "Please split out the delivery cost.", "Is this for the whole team or just the supervisors?"]))
                 t = self.workday_after(t, self.rng.uniform(2, 16))
@@ -736,6 +736,28 @@ class Seeder:
 
         # Mining Indaba: one trip, many requests, several currencies.
         self.trip_story(days_ago, hours_ago)
+
+        # The leadership offsite and the London investor trip, paid in full.
+        for who, title, cat, supplier, amt, cur, d, proj in [
+            ("aisha", "Leadership offsite venue and rooms, Muscat", "Accommodation", "Alila Jabal Akhdar", "14800", "USD", date(2026, 9, 1), "TRP-OFFSITE"),
+            ("aisha", "Flights to Muscat for the leadership team (8)", "Flights", "Oman Air", "6200", "USD", date(2026, 9, 3), "TRP-OFFSITE"),
+            ("aisha", "Offsite facilitator", "Professional services", "Kinetic Leadership", "4500", "USD", date(2026, 9, 8), "TRP-OFFSITE"),
+            ("omar", "London investor meetings: flights", "Flights", "Emirates", "6900", "USD", date(2026, 8, 31), "TRP-LONDON"),
+            ("omar", "London investor meetings: hotel", "Accommodation", "The Ned", "3100", "GBP", date(2026, 8, 31), "TRP-LONDON"),
+        ]:
+            h = self.request(who, title, cat, supplier, Decimal(amt), cur, self.local(d, 11), project=proj)
+            t = self.approve_all(h, self.local(d, 11))
+            self.invoice(h, self.workday_after(t, 120), paid_after_days=4, with_pdf=False)
+        for who, title, cat, supplier, amt, d in [
+            ("rahul", "Endpoint protection renewal (120 devices)", "Software & subscriptions", "CrowdStrike", "9800", date(2026, 6, 2)),
+            ("daniel", "Firewall replacement, Dubai office", "IT hardware", "Spectrum (Fortinet)", "11500", date(2026, 7, 20)),
+        ]:
+            h = self.request(who, title, cat, supplier, Decimal(amt), "USD", self.local(d, 10), project="PRJ-CYBER")
+            t = self.approve_all(h, self.local(d, 10))
+            self.invoice(h, self.workday_after(t, 60), paid_after_days=5)
+        h = self.request("priya", "HR system vendor selection support", "Professional services", "Mercer", Decimal("8500"), "USD", self.local(date(2026, 9, 21), 10), project="PRJ-HRIS", description="Requirements and vendor shortlist for the new HR system.")
+        t = self.approve_all(h, self.local(date(2026, 9, 21), 10))
+        self.invoice(h, self.workday_after(t, 70), paid_after_days=4)
 
         # A leaver: Rahul leaves in October; his work moves to Daniel.
         h = self.request("itsupport", "Headsets for the service desk", "IT hardware", "Jabra (via Virgin Megastore)", Decimal("2400"), "AED", self.local(date(2026, 10, 13), 11))

@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import { useAction, useMe } from "../../api/hooks";
 import { Button, Card, CardHeader, ErrorNote, Field, Input, PageHeader, PageLoader } from "../../components/ui";
 import { date } from "../../lib/format";
+import { todayIso } from "../../lib/session";
 
 interface Rate {
   id: number;
@@ -17,7 +18,7 @@ interface Rate {
 export default function Rates() {
   const { data: me } = useMe();
   const { data, isLoading, error } = useQuery({ queryKey: ["rates"], queryFn: () => api.get<Rate[]>("/api/admin/fx-rates") });
-  const [f, setF] = useState({ currency: "", per_usd: "", effective_date: new Date().toISOString().slice(0, 10) });
+  const [f, setF] = useState(() => ({ currency: "", per_usd: "", effective_date: todayIso() }));
   const add = useAction(() => api.post("/api/admin/fx-rates", { currency: f.currency, usd_per_unit: (1 / Number(f.per_usd)).toFixed(10), effective_date: f.effective_date }), {
     success: "Rate added",
     invalidate: [["rates"], ["lookups"]],

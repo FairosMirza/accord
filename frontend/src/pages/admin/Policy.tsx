@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, FlaskConical, History, Plus, Scale, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { api } from "../../api/client";
 import { useAction, useLookups, useMe, usePolicy } from "../../api/hooks";
-import type { Group, Person, PolicyDocument, PolicyRule, UserBrief } from "../../api/types";
+import type { Group, Person, PolicyDocument, PolicyPayload, PolicyRule, UserBrief } from "../../api/types";
 import { Avatar, Button, Card, CardHeader, ErrorNote, Field, Input, Modal, PageHeader, PageLoader, Select, Textarea, Toggle } from "../../components/ui";
 import { dateTime, GROUP, usd } from "../../lib/format";
 
@@ -24,18 +24,20 @@ function describe(rule: PolicyRule, labels: Record<string, string>, people: Pers
 
 export default function Policy() {
   const { data, isLoading, error } = usePolicy();
+  if (isLoading) return <PageLoader />;
+  if (error || !data) return <ErrorNote error={error} />;
+  // Remount the editor when a new version is published, so the draft starts from it.
+  return <PolicyEditor key={data.current.version} data={data} />;
+}
+
+function PolicyEditor({ data }: { data: PolicyPayload }) {
   const { data: me } = useMe();
   const canEdit = !!me?.capabilities.can_manage_policy;
   const people = useQuery({ queryKey: ["people-all"], queryFn: () => api.get<Person[]>("/api/admin/users"), enabled: canEdit });
-  const [doc, setDoc] = useState<PolicyDocument | null>(null);
+  const [doc, setDoc] = useState<PolicyDocument>(() => structuredClone(data.current.document));
   const [publishing, setPublishing] = useState(false);
   const [trying, setTrying] = useState(false);
-  useEffect(() => {
-    if (data) setDoc(structuredClone(data.current.document));
-  }, [data]);
-  const dirty = useMemo(() => !!data && !!doc && JSON.stringify(doc) !== JSON.stringify(data.current.document), [data, doc]);
-  if (isLoading || !doc) return <PageLoader />;
-  if (error || !data) return <ErrorNote error={error} />;
+  const dirty = JSON.stringify(doc) !== JSON.stringify(data.current.document);
   const labels = data.role_labels;
   const positionRoles = Object.keys(data.position_holders);
 

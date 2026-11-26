@@ -5,6 +5,7 @@ import { useAction, useDelegations, useEligibleStandIns, useMe } from "../api/ho
 import type { Delegation } from "../api/types";
 import { Avatar, Badge, Button, Card, CardHeader, Empty, Field, Input, PageHeader, PageLoader, Select } from "../components/ui";
 import { date } from "../lib/format";
+import { todayIso } from "../lib/session";
 
 const STATE_TONE = { active: "green", scheduled: "sky", expired: "zinc", ended: "zinc" } as const;
 
@@ -37,7 +38,7 @@ export default function Cover() {
   const { data: me } = useMe();
   const { data, isLoading } = useDelegations();
   const { data: eligible } = useEligibleStandIns();
-  const today = new Date().toISOString().slice(0, 10);
+  const [today] = useState(todayIso);
   const [f, setF] = useState({ delegate_id: "", starts_on: today, ends_on: "", note: "" });
   const inv = [["delegations"], ["me"], ["dashboard"], ["requests"]];
   const create = useAction(() => api.post("/api/delegations", { delegate_id: Number(f.delegate_id), starts_on: f.starts_on, ends_on: f.ends_on, note: f.note || null }), {

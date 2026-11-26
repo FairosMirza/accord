@@ -1,12 +1,12 @@
 import { createBrowserRouter } from "react-router";
 import Layout from "./components/Layout";
-import { ButtonLink, Empty } from "./components/ui";
 import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
 import Cover from "./pages/Cover";
 import Finance from "./pages/Finance";
 import Home from "./pages/Home";
 import Insights from "./pages/Insights";
+import NotFound from "./pages/NotFound";
 import Outbox from "./pages/Outbox";
 import { ProjectDetail, Projects } from "./pages/Projects";
 import RequestDetail from "./pages/RequestDetail";
@@ -17,14 +17,6 @@ import Categories from "./pages/admin/Categories";
 import People from "./pages/admin/People";
 import Policy from "./pages/admin/Policy";
 import Rates from "./pages/admin/Rates";
-
-function NotFound() {
-  return (
-    <Empty title="Page not found" action={<ButtonLink to="/" variant="primary">Go home</ButtonLink>}>
-      The link may be old, or you may not have access to it.
-    </Empty>
-  );
-}
 
 export const router = createBrowserRouter([
   { path: "/signin", element: <SignIn /> },

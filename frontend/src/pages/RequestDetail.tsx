@@ -25,6 +25,7 @@ import type { Change, Invoice, RequestDetail as Detail } from "../api/types";
 import { ApprovalRoute, DecisionDialog, StatusPill } from "../components/requests";
 import { Avatar, Badge, Button, ButtonLink, Card, CardHeader, ErrorNote, Field, Input, KeyValue, Modal, PageLoader, Progress, Textarea } from "../components/ui";
 import { ago, bytes, date, dateTime, GROUP, money, recurringLabel, usd } from "../lib/format";
+import { todayIso } from "../lib/session";
 
 export default function RequestDetail() {
   const { ref } = useParams();
@@ -384,7 +385,7 @@ function FinancePanel({ r }: { r: Detail }) {
 }
 
 function InvoiceModal({ r, onClose }: { r: Detail; onClose: () => void }) {
-  const [form, setForm] = useState({ invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), amount: "", currency: r.currency, supplier: r.supplier ?? "", notes: "", override_reason: "" });
+  const [form, setForm] = useState(() => ({ invoice_number: "", invoice_date: todayIso(), amount: "", currency: r.currency, supplier: r.supplier ?? "", notes: "", override_reason: "" }));
   const [file, setFile] = useState<File | null>(null);
   const [needsOverride, setNeedsOverride] = useState(false);
   const save = useAction(
@@ -436,7 +437,7 @@ function InvoiceModal({ r, onClose }: { r: Detail; onClose: () => void }) {
 }
 
 function PayModal({ r, invoice, onClose }: { r: Detail; invoice: Invoice; onClose: () => void }) {
-  const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
+  const [paidOn, setPaidOn] = useState(todayIso);
   const [reference, setReference] = useState("");
   const pay = useAction(() => api.post(`/api/invoices/${invoice.id}/pay`, { paid_on: paidOn, reference: reference || null }), { success: "Marked as paid", invalidate: [["request", r.ref], ["dashboard"], ["requests"]], onSuccess: onClose });
   return (

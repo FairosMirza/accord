@@ -24,14 +24,13 @@ export default function SignIn() {
   const qc = useQueryClient();
   const error = params.get("error");
 
+  const searching = q.trim().length >= 2;
   useEffect(() => {
-    if (q.trim().length < 2) {
-      setPeople([]);
-      return;
-    }
+    if (!searching) return;
     const t = setTimeout(() => api.get<UserBrief[]>(`/api/auth/people?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])), 200);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, searching]);
+  const results = searching ? people : [];
 
   const signInAs = async (id: number) => {
     setBusy(id);
@@ -129,9 +128,9 @@ export default function SignIn() {
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
                   <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Or sign in as anyone else, e.g. a site technician" className="pl-9" />
                 </div>
-                {people.length > 0 && (
+                {results.length > 0 && (
                   <div className="mt-2 divide-y divide-zinc-100 rounded-xl bg-white ring-1 ring-zinc-200">
-                    {people.map((u) => (
+                    {results.map((u) => (
                       <button key={u.id} type="button" onClick={() => signInAs(u.id)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-zinc-50">
                         <Avatar name={u.name} initials={u.initials} size="sm" />
                         <span className="min-w-0 flex-1 truncate text-[14px]">
