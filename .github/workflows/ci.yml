@@ -34,7 +34,7 @@ jobs:
       ACCORD_DATABASE_URL: postgresql+psycopg://accord:accord@localhost:5432/accord_test
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --frozen
