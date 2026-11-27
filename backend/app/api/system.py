@@ -51,10 +51,13 @@ def demo_run_reminders(user: User = Depends(current_user), db: Session = Depends
 
 
 @demo_router.post("/reset")
-def demo_reset(user: User = Depends(current_user)):
+def demo_reset(user: User = Depends(current_user), db: Session = Depends(get_db)):
     _require_demo()
     from app.seed import reset_demo
 
+    # Release this request's own transaction first: it holds locks the schema drop would wait on.
+    db.rollback()
+    db.close()
     reset_demo()
     return {"ok": True}
 

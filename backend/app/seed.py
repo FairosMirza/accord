@@ -913,33 +913,47 @@ def seed(db: Session, now: datetime | None = None) -> None:
     Seeder(db, now or datetime.now(UTC)).run()
 
 
+def _wipe_schema() -> None:
+    """Drop everything, including the append-only audit log, and recreate the schema."""
+    from app.main import run_migrations
+
+    with engine.begin() as conn:
+        # Never hang behind another session's locks: fail fast instead.
+        conn.execute(text("SET LOCAL lock_timeout = '20s'"))
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+    engine.dispose()
+    run_migrations()
+
+
 def seed_if_empty() -> bool:
     # Several instances can boot at once against an empty database; only one may seed it.
     with engine.connect() as lock:
         lock.execute(text("SELECT pg_advisory_lock(724004)"))
+        lock.commit()
         try:
             with SessionLocal() as db:
-                if db.execute(select(func.count(User.id))).scalar():
-                    return False
+                people = db.execute(select(func.count(User.id))).scalar()
+                complete = db.execute(select(func.count()).select_from(DemoPersona)).scalar()
+            if people and complete:
+                return False
+            if people:
+                # Personas are written last, so their absence means an earlier seed was interrupted.
+                log.warning("Demo data is incomplete; rebuilding it")
+                _wipe_schema()
+            with SessionLocal() as db:
                 log.info("Seeding demo data")
                 seed(db)
                 log.info("Demo data ready")
-                return True
+            return True
         finally:
             lock.execute(text("SELECT pg_advisory_unlock(724004)"))
             lock.commit()
 
 
 def reset_demo() -> None:
-    """Wipe everything (including the append-only audit log) and re-seed. Demo mode only."""
-    from app.main import run_migrations
-
-    with engine.begin() as conn:
-        conn.execute(text("SELECT pg_advisory_xact_lock(724003)"))
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-    engine.dispose()
-    run_migrations()
+    """Wipe everything and re-seed. Demo mode only."""
+    _wipe_schema()
     seed_if_empty()
 
 
