@@ -19,7 +19,8 @@ function describe(rule: PolicyRule, labels: Record<string, string>, people: Pers
           : people.find((p) => p.id === rule.approver.user_id)?.name ?? "a specific person";
   const groups = rule.when.category_groups.length ? rule.when.category_groups.map((g) => GROUP[g].label).join(" or ") + " spend" : "all spend";
   const min = rule.when.min_total_usd !== null && rule.when.min_total_usd !== "" && Number(rule.when.min_total_usd) > 0 ? ` of ${usd(Number(rule.when.min_total_usd))} or more` : "";
-  return `${groups}${min} is approved by ${who}.`;
+  const text = `${groups}${min} is approved by ${who}.`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export default function Policy() {

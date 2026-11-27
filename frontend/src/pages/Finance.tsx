@@ -69,7 +69,7 @@ export default function Finance() {
             <div className="divide-y divide-zinc-100">
               <div className="hidden grid-cols-[minmax(0,1fr)_120px_120px_120px_150px] gap-4 px-5 py-2.5 text-[12px] font-medium uppercase tracking-wide text-zinc-400 md:grid">
                 <span>Request</span>
-                <span className="text-right">Approved</span>
+                <span className="text-right">Approved (USD)</span>
                 <span className="text-right">Invoiced</span>
                 <span className="text-right">Paid</span>
                 <span>Status</span>
@@ -86,7 +86,10 @@ export default function Finance() {
                     </div>
                   </div>
                   <div className="text-right md:contents">
-                    <span className="block text-[14px] font-semibold tabular md:text-right">{money(r.approved_total_amount, r.currency)}</span>
+                    <span className="block text-[14px] font-semibold tabular md:text-right">
+                      {usd(r.approved_total_usd)}
+                      {r.currency !== "USD" && <span className="block text-[11.5px] font-normal text-zinc-500">{money(r.approved_total_amount, r.currency)}</span>}
+                    </span>
                     <span className="hidden text-right text-[13px] tabular text-zinc-600 md:block">{usd(r.finance?.invoiced_usd)}</span>
                     <span className="hidden text-right text-[13px] tabular text-zinc-600 md:block">{usd(r.finance?.paid_usd)}</span>
                   </div>
