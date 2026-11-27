@@ -109,7 +109,9 @@ class AttachmentKind(StrEnum):
 
 class InvoiceStatus(StrEnum):
     RECEIVED = "received"
+    QUERIED = "queried"  # Finance asked the supplier for a corrected invoice; not payable meanwhile
     PAID = "paid"
+    VOID = "void"  # replaced by a corrected invoice; kept for the record, excluded from totals
 
 
 class TimestampMixin:
@@ -425,11 +427,25 @@ class Invoice(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_on: Mapped[date | None] = mapped_column(Date)
     payment_reference: Mapped[str | None] = mapped_column(String(120))
+    query_reason: Mapped[str | None] = mapped_column(Text)
+    queried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    queried_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", name="fk_invoices_queried_by_id"))
+    query_resolution: Mapped[str | None] = mapped_column(Text)
+    replaces_invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id", name="fk_invoices_replaces_invoice_id"))
+    void_reason: Mapped[str | None] = mapped_column(Text)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", name="fk_invoices_voided_by_id"))
 
     request: Mapped[SpendRequest] = relationship(back_populates="invoices")
     received_by: Mapped[User | None] = relationship(foreign_keys=[received_by_id])
     paid_by: Mapped[User | None] = relationship(foreign_keys=[paid_by_id])
+    queried_by: Mapped[User | None] = relationship(foreign_keys=[queried_by_id])
+    voided_by: Mapped[User | None] = relationship(foreign_keys=[voided_by_id])
     attachments: Mapped[list[Attachment]] = relationship(viewonly=True)
+
+    @property
+    def is_live(self) -> bool:
+        return self.status != InvoiceStatus.VOID
 
 
 class Delegation(TimestampMixin, Base):

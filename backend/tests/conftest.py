@@ -187,9 +187,17 @@ class Org:
         return req
 
     def record_invoice(
-        self, finance_user: User, req: SpendRequest, number: str, amount: str | Decimal, *, override_reason: str | None = None
+        self,
+        finance_user: User,
+        req: SpendRequest,
+        number: str,
+        amount: str | Decimal,
+        *,
+        currency: str = "USD",
+        override_reason: str | None = None,
+        replaces: Invoice | None = None,
     ) -> Invoice:
-        """A USD invoice dated 20 November 2026, without a file."""
+        """An invoice dated 20 November 2026, without a file."""
         return workflow.record_invoice(
             self.db,
             finance_user,
@@ -197,12 +205,13 @@ class Org:
             invoice_number=number,
             invoice_date=date(2026, 11, 20),
             amount=Decimal(amount),
-            currency="USD",
+            currency=currency,
             supplier=None,
             notes=None,
             override_reason=override_reason,
             file=None,
             client=SYSTEM,
+            replaces_invoice_id=replaces.id if replaces else None,
         )
 
     # ------------------------------------------------------------ looking at the results

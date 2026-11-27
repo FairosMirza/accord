@@ -26,6 +26,7 @@ from app.audit import ClientInfo
 from app.directory import Directory
 from app.errors import Conflict, DomainError, NotAllowed, NotFound
 from app.fx import money, to_usd, usd_per_unit
+from app.invoicing import live_invoices
 from app.models import (
     ApprovalStep,
     Attachment,
@@ -736,7 +737,7 @@ def close(db: Session, actor: User, req: SpendRequest, note: str | None, client:
         raise NotAllowed("Only Finance can close approved requests.")
     req.status = RequestStatus.CLOSED
     req.closed_at = utcnow()
-    invoiced = sum((i.amount_usd for i in req.invoices), Decimal(0))
+    invoiced = sum((i.amount_usd for i in live_invoices(req)), Decimal(0))
     audit.record(db, action="request.closed", summary=f"{actor.name} closed {req.ref}" + (f": {note}" if note else ""), entity_type="request", entity_id=req.ref, actor=actor, request=req, data={"note": note, "invoiced_usd": str(invoiced)}, client=client)
     notify(db, req.requester, kind="closed", title=f"Closed: {req.title}", body="Finance has closed this request. No further invoices will be paid against it.", request=req, email=False)
     return req
@@ -756,6 +757,7 @@ def record_invoice(
     override_reason: str | None,
     file: tuple[str, bytes] | None,
     client: ClientInfo,
+    replaces_invoice_id: int | None = None,
 ) -> Invoice:
     if not actor.has_role(Role.FINANCE, Role.FINANCE_ADMIN):
         raise NotAllowed("Only Finance can record invoices.")
@@ -766,11 +768,18 @@ def record_invoice(
         raise DomainError("Enter the invoice number.", "invoice_number_required")
     if amount is None or Decimal(amount) <= 0:
         raise DomainError("Enter the invoice amount.", "amount_invalid")
+    replaced = None
+    if replaces_invoice_id is not None:
+        replaced = next((i for i in req.invoices if i.id == replaces_invoice_id), None)
+        if replaced is None or replaced.status not in (InvoiceStatus.RECEIVED, InvoiceStatus.QUERIED):
+            raise Conflict("Only an unpaid invoice on this request can be replaced by a corrected one.")
     supplier = (supplier or req.supplier or "").strip() or None
     dup = db.execute(
         select(Invoice).where(
             func.lower(Invoice.invoice_number) == invoice_number.lower(),
             or_(func.lower(Invoice.supplier) == (supplier or "").lower(), Invoice.request_id == req.id),
+            Invoice.status != InvoiceStatus.VOID,
+            Invoice.id != (replaced.id if replaced else -1),
         )
     ).scalar()
     if dup is not None:
@@ -780,16 +789,23 @@ def record_invoice(
     amount = money(amount)
     amount_usd = to_usd(amount, rate)
     _, policy = current_policy(db)
-    invoiced = sum((i.amount_usd for i in req.invoices), Decimal(0))
+    invoiced = sum((i.amount_usd for i in live_invoices(req) if i is not replaced), Decimal(0))
     ceiling = Decimal(req.approved_total_usd) * (1 + Decimal(policy.amendment_tolerance_pct) / 100)
     exceeds = invoiced + amount_usd > ceiling
+    over_usd = invoiced + amount_usd - Decimal(req.approved_total_usd)
     override_reason = (override_reason or "").strip() or None
     if exceeds and not override_reason:
         raise DomainError(
-            f"This takes invoiced spend to {fmt_money(invoiced + amount_usd, 'USD')}, above the approved "
-            f"{fmt_money(req.approved_total_usd, 'USD')}. Ask {req.requester.name} to submit a change, or record an override reason.",
+            f"This takes invoiced spend to {fmt_money(invoiced + amount_usd, 'USD')}, {fmt_money(over_usd, 'USD')} more than the approved "
+            f"{fmt_money(req.approved_total_usd, 'USD')}. Add a note on the difference. {req.requester.name} will be asked to review it.",
             "exceeds_approval",
         )
+    now = utcnow()
+    if replaced is not None:
+        replaced.status = InvoiceStatus.VOID
+        replaced.void_reason = f"Replaced by corrected invoice {invoice_number}"
+        replaced.voided_at = now
+        replaced.voided_by_id = actor.id
     inv = Invoice(
         request=req,
         invoice_number=invoice_number,
@@ -803,6 +819,7 @@ def record_invoice(
         override_reason=override_reason if exceeds else None,
         notes=(notes or "").strip() or None,
         received_by_id=actor.id,
+        replaces_invoice_id=replaced.id if replaced else None,
     )
     db.add(inv)
     db.flush()
@@ -828,21 +845,119 @@ def record_invoice(
         db,
         action="invoice.recorded",
         summary=f"{actor.name} recorded invoice {invoice_number} for {fmt_money(amount, currency)} on {req.ref}"
-        + (" (over the approved amount, override recorded)" if exceeds else ""),
+        + (f", replacing {replaced.invoice_number}" if replaced else "")
+        + (f" ({fmt_money(over_usd, 'USD')} over the approval; {req.requester.name} asked to review)" if exceeds else ""),
         entity_type="invoice",
         entity_id=inv.id,
         actor=actor,
         request=req,
-        data={"invoice_number": invoice_number, "amount": str(amount), "currency": currency, "amount_usd": str(amount_usd), "exceeds_approval": exceeds, "override_reason": inv.override_reason, "file_sha256": file_hash},
+        data={
+            "invoice_number": invoice_number,
+            "amount": str(amount),
+            "currency": currency,
+            "amount_usd": str(amount_usd),
+            "exceeds_approval": exceeds,
+            "over_approval_usd": str(over_usd) if exceeds else None,
+            "override_reason": inv.override_reason,
+            "replaces_invoice": replaced.invoice_number if replaced else None,
+            "file_sha256": file_hash,
+        },
         client=client,
     )
-    notify(db, req.requester, kind="invoice", title=f"Invoice received for {req.ref}", body=f"Finance recorded invoice {invoice_number} for {fmt_money(amount, currency)}.", request=req, email=False)
+    if exceeds:
+        notify(
+            db,
+            req.requester,
+            kind="invoice_difference",
+            title=f"Invoice difference to review: {req.title}",
+            body=(
+                f"{supplier or 'The supplier'} invoiced {fmt_money(amount, currency)}. Invoices now total {fmt_money(invoiced + amount_usd, 'USD')}, "
+                f"{fmt_money(over_usd, 'USD')} more than the {fmt_money(req.approved_total_usd, 'USD')} approved. "
+                f"Finance's note: \u201c{override_reason}\u201d If the higher amount is right, submit the revised total for approval. "
+                "If it isn't, tell Finance in the comments."
+            ),
+            request=req,
+            cta="Review invoice difference",
+        )
+    else:
+        notify(db, req.requester, kind="invoice", title=f"Invoice received for {req.ref}", body=f"Finance recorded invoice {invoice_number} for {fmt_money(amount, currency)}.", request=req, email=False)
+    return inv
+
+
+def _finance_invoice(actor: User, inv: Invoice, expected: InvoiceStatus) -> SpendRequest:
+    if not actor.has_role(Role.FINANCE, Role.FINANCE_ADMIN):
+        raise NotAllowed("Only Finance can manage invoices.")
+    if inv.status != expected:
+        raise Conflict(f"Invoice {inv.invoice_number} is {inv.status}, so that can't be done now.")
+    return inv.request
+
+
+def query_invoice(db: Session, actor: User, inv: Invoice, reason: str, client: ClientInfo) -> Invoice:
+    """Finance asks the supplier for a corrected invoice. It can't be paid meanwhile."""
+    req = _finance_invoice(actor, inv, InvoiceStatus.RECEIVED)
+    reason = (reason or "").strip()
+    if not reason:
+        raise DomainError("Say what's wrong with the invoice.", "reason_required")
+    inv.status = InvoiceStatus.QUERIED
+    inv.query_reason = reason
+    inv.queried_at = utcnow()
+    inv.queried_by_id = actor.id
+    inv.query_resolution = None
+    supplier = inv.supplier or req.supplier or "the supplier"
+    audit.record(
+        db,
+        action="invoice.queried",
+        summary=f"{actor.name} queried invoice {inv.invoice_number} on {req.ref} with {supplier}: {reason}",
+        entity_type="invoice",
+        entity_id=inv.id,
+        actor=actor,
+        request=req,
+        data={"invoice_number": inv.invoice_number, "reason": reason},
+        client=client,
+    )
+    notify(db, req.requester, kind="invoice_queried", title=f"Invoice {inv.invoice_number} queried with {supplier}", body=f"{actor.name}: {reason}. Finance will record the corrected invoice when it arrives.", request=req, email=False)
+    return inv
+
+
+def accept_invoice(db: Session, actor: User, inv: Invoice, note: str, client: ClientInfo) -> Invoice:
+    """The query is settled in the supplier's favour: the invoice stands as billed."""
+    req = _finance_invoice(actor, inv, InvoiceStatus.QUERIED)
+    note = (note or "").strip()
+    if not note:
+        raise DomainError("Say how the query was settled.", "note_required")
+    inv.status = InvoiceStatus.RECEIVED
+    inv.query_resolution = note
+    audit.record(
+        db,
+        action="invoice.query_resolved",
+        summary=f"{actor.name} accepted invoice {inv.invoice_number} on {req.ref} as billed: {note}",
+        entity_type="invoice",
+        entity_id=inv.id,
+        actor=actor,
+        request=req,
+        data={"invoice_number": inv.invoice_number, "resolution": note},
+        client=client,
+    )
+    if inv.exceeds_approval:
+        notify(
+            db,
+            req.requester,
+            kind="invoice_difference",
+            title=f"Invoice difference to review: {req.title}",
+            body=f"The supplier confirmed invoice {inv.invoice_number} is correct ({note}). It's more than was approved, so please review the difference and submit the revised total.",
+            request=req,
+            cta="Review invoice difference",
+        )
     return inv
 
 
 def mark_paid(db: Session, actor: User, inv: Invoice, paid_on: date, reference: str | None, client: ClientInfo) -> Invoice:
     if not actor.has_role(Role.FINANCE, Role.FINANCE_ADMIN):
         raise NotAllowed("Only Finance can release payments.")
+    if inv.status == InvoiceStatus.QUERIED:
+        raise Conflict("This invoice is queried with the supplier. Accept it as billed or record the corrected invoice first.")
+    if inv.status == InvoiceStatus.VOID:
+        raise Conflict("This invoice was replaced by a corrected one.")
     if inv.status != InvoiceStatus.RECEIVED:
         raise Conflict("This invoice is already paid.")
     req = inv.request

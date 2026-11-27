@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { Check, Clock, CornerUpLeft, Eye, Lock, Paperclip, Repeat, UserCheck, X } from "lucide-react";
+import { ArrowRight, Check, CircleAlert, Clock, CornerUpLeft, Eye, Lock, Paperclip, Repeat, UserCheck, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api/client";
-import { useAction, useLookups } from "../api/hooks";
-import type { RequestDetail, RequestSummary, Step } from "../api/types";
-import { ago, dateTime, FINANCE_STATE, GROUP, money, recurringLabel, STATUS, usd, waitingFor } from "../lib/format";
+import { useAction, useLookups, useMe } from "../api/hooks";
+import type { FinanceState, PendingChange, RequestDetail, RequestSummary, Step } from "../api/types";
+import { ago, dateTime, FINANCE_STATE, GROUP, money, nextStepText, overApproval, recurringLabel, signedPct, STATUS, usd, waitingFor } from "../lib/format";
 import { Avatar, Badge, Button, Field, Modal, Textarea } from "./ui";
 
 export function StatusPill({ r }: { r: Pick<RequestSummary, "status" | "finance" | "amendment_in_progress"> }) {
@@ -31,6 +31,54 @@ export function Amount({ r, size = "md" }: { r: Pick<RequestSummary, "total_amou
     <div className="text-right">
       <p className={clsx("font-semibold tabular text-zinc-900", size === "lg" ? "text-[26px] tracking-tight" : "text-[15px]")}>{money(r.total_amount, r.currency)}</p>
       {r.currency !== "USD" && <p className={clsx("tabular text-zinc-500", size === "lg" ? "text-[14px]" : "text-[12px]")}>≈ {usd(r.total_usd)}</p>}
+    </div>
+  );
+}
+
+/** "Approved ZAR 85,000 → Requested ZAR 140,000 +65%": what an approver needs to know before tapping Approve. */
+export function ChangeLine({ change, className }: { change: PendingChange; className?: string }) {
+  return (
+    <p className={clsx("flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12.5px] tabular", className)}>
+      <span className="whitespace-nowrap">
+        <span className="text-zinc-500">Approved</span> <span className="font-medium text-zinc-700">{money(change.approved_total_amount, change.approved_currency)}</span>
+      </span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <ArrowRight className="size-3 shrink-0 text-zinc-400" aria-label="to" />
+        <span className="text-zinc-500">Requested</span>
+        <span className="font-semibold text-zinc-900">{money(change.requested_total_amount, change.requested_currency)}</span>
+      </span>
+      {change.requested_currency !== change.approved_currency && <span className="text-zinc-500">(≈ {usd(change.requested_total_usd)})</span>}
+      {change.change_pct !== null && <span className="font-semibold text-amber-700">{signedPct(change.change_pct)}</span>}
+    </p>
+  );
+}
+
+/** "$750 over approval · Awaiting amendment from Leo Park": the difference, and who acts next. */
+export function NextStepLine({ finance, className }: { finance: FinanceState; className?: string }) {
+  const { data: me } = useMe();
+  if (!finance.next_step) return null;
+  return (
+    <p className={clsx("flex items-start gap-1.5 text-[12.5px] leading-snug", className)}>
+      <CircleAlert className="mt-px size-3.5 shrink-0 text-rose-600" />
+      <span>
+        {finance.excess && <span className="font-semibold text-rose-700">{overApproval(finance.excess)} · </span>}
+        <span className="font-medium text-zinc-700">{nextStepText(finance.next_step, me?.user.id)}</span>
+      </span>
+    </p>
+  );
+}
+
+/** Why this approval is yours: the rules behind the step, and whose step it is if you're covering. */
+export function ApprovingAs({ r }: { r: RequestSummary }) {
+  const { data: me } = useMe();
+  if (!r.waiting_reasons.length) return null;
+  return (
+    <div className="-mt-1 flex items-start gap-1.5 px-4 pb-1 text-[12.5px] text-zinc-500 sm:px-5 sm:pl-[68px]">
+      <UserCheck className="mt-px size-3.5 shrink-0 text-zinc-400" />
+      <span>
+        {r.waiting_for && r.waiting_for.id !== me?.user.id && <span className="font-medium text-sky-700">Covering for {r.waiting_for.name} · </span>}
+        You're approving as {r.waiting_reasons.join(", ")}
+      </span>
     </div>
   );
 }
@@ -74,6 +122,8 @@ export function RequestRow({ r, showRequester = true, emphasiseWaiting }: { r: R
             </span>
           )}
         </div>
+        {r.change && <ChangeLine change={r.change} className="mt-2" />}
+        {r.finance?.next_step && <NextStepLine finance={r.finance} className="mt-2" />}
       </div>
     </Link>
   );
@@ -194,6 +244,14 @@ export function DecisionDialog({ request, decision, onClose, onDone }: { request
         </>
       }
     >
+      {request.change && (
+        <div className="mb-4 rounded-xl bg-amber-50 px-3 py-2.5 ring-1 ring-inset ring-amber-200">
+          <p className="text-[12px] font-semibold uppercase tracking-wide text-amber-800">Change to an approved request</p>
+          <ChangeLine change={request.change} className="mt-1" />
+          {request.change.reason && <p className="mt-1.5 text-[13px] leading-relaxed text-amber-950">“{request.change.reason}”</p>}
+          {decision === "reject" && <p className="mt-1.5 text-[12px] text-amber-800">Rejecting keeps the original approval of {money(request.change.approved_total_amount, request.change.approved_currency)}.</p>}
+        </div>
+      )}
       {decision === "reject" && (
         <div className="mb-4">
           <p className="mb-2 text-[13px] font-medium text-zinc-800">Reason</p>

@@ -142,7 +142,7 @@ def request_permissions(db: Session, user: User, req: SpendRequest) -> RequestPe
             p.can_return = not req.is_amendment_in_progress
             p.acting_for = principal.name if principal else None
 
-    has_invoices = bool(req.invoices)
+    has_invoices = any(i.is_live for i in req.invoices)
     if is_requester and status == RequestStatus.APPROVED:
         p.can_amend = True
     if status == RequestStatus.APPROVED and not has_invoices and (is_requester or is_finance):

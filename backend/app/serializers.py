@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.invoicing import amendment_change, excess, live_invoices, next_step
 from app.models import (
     ApprovalStep,
     AuditEvent,
@@ -53,21 +54,40 @@ def user_brief(u: User | None) -> dict[str, Any] | None:
 def finance_state(req: SpendRequest) -> dict[str, Any] | None:
     if req.approved_total_usd is None:
         return None
-    invoiced = sum((i.amount_usd for i in req.invoices), Decimal(0))
-    paid = sum((i.amount_usd for i in req.invoices if i.status == InvoiceStatus.PAID), Decimal(0))
-    if not req.invoices:
+    invoices = live_invoices(req)
+    invoiced = sum((i.amount_usd for i in invoices), Decimal(0))
+    paid = sum((i.amount_usd for i in invoices if i.status == InvoiceStatus.PAID), Decimal(0))
+    if not invoices:
         state = "awaiting_invoice"
-    elif any(i.status == InvoiceStatus.RECEIVED for i in req.invoices):
+    elif any(i.status in (InvoiceStatus.RECEIVED, InvoiceStatus.QUERIED) for i in invoices):
         state = "awaiting_payment"
     else:
         state = "paid"
+    over = excess(req)
+    step = next_step(req)
+    flagged = [i for i in invoices if i.exceeds_approval]
     return {
         "state": state,
         "invoiced_usd": float(invoiced),
         "paid_usd": float(paid),
         "remaining_usd": float(Decimal(req.approved_total_usd) - invoiced),
-        "invoice_count": len(req.invoices),
-        "over_approval": any(i.exceeds_approval for i in req.invoices),
+        "invoice_count": len(invoices),
+        "over_approval": bool(flagged),
+        "excess": {
+            "over_usd": float(over.over_usd),
+            "invoiced_usd": float(over.invoiced_usd),
+            "approved_usd": float(over.approved_usd),
+            "currency": over.currency,
+            "over_amount": _num(over.over_amount),
+            "invoiced_amount": _num(over.invoiced_amount),
+            "approved_amount": _num(req.approved_total_amount),
+            "invoice_id": flagged[-1].id,
+            "invoice_number": flagged[-1].invoice_number,
+            "note": flagged[-1].override_reason,
+        }
+        if over
+        else None,
+        "next_step": {"kind": step.kind, "owner": user_brief(step.owner), "label": step.label} if step else None,
     }
 
 
@@ -97,6 +117,7 @@ def request_summary(req: SpendRequest) -> dict[str, Any]:
         "has_quote": any(a.kind == "quote" for a in req.attachments),
         "no_quote_reason": req.no_quote_reason,
         "amendment_in_progress": req.is_amendment_in_progress,
+        "change": amendment_change(req),
         "waiting_for": user_brief(step.approver) if step else None,
         "waiting_reasons": step.reasons if step else [],
         "waiting_since": _iso(step.activated_at) if step else None,
@@ -132,6 +153,7 @@ def step_json(s: ApprovalStep) -> dict[str, Any]:
 
 
 def invoice_json(i: Invoice) -> dict[str, Any]:
+    replaces = next((x for x in i.request.invoices if x.id == i.replaces_invoice_id), None) if i.replaces_invoice_id else None
     return {
         "id": i.id,
         "invoice_number": i.invoice_number,
@@ -149,6 +171,14 @@ def invoice_json(i: Invoice) -> dict[str, Any]:
         "paid_by": user_brief(i.paid_by),
         "paid_on": _iso(i.paid_on),
         "payment_reference": i.payment_reference,
+        "query_reason": i.query_reason,
+        "queried_by": user_brief(i.queried_by),
+        "queried_at": _iso(i.queried_at),
+        "query_resolution": i.query_resolution,
+        "replaces_invoice_number": replaces.invoice_number if replaces else None,
+        "void_reason": i.void_reason,
+        "voided_by": user_brief(i.voided_by),
+        "voided_at": _iso(i.voided_at),
         "attachments": [{"id": a.id, "filename": a.filename, "size_bytes": a.size_bytes} for a in i.attachments],
     }
 

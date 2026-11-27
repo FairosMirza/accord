@@ -53,3 +53,18 @@ def test_approver_can_approve_through_the_api_but_others_cannot(client, org):
     assert body["status"] == "approved"
     assert body["steps"][0]["acted_by"]["id"] == org.tech_lead.id
     assert body["steps"][0]["comment"] == "Fine by me"
+
+
+def test_finance_queue_and_requester_dashboard_show_who_owns_an_invoice_difference(client, org):
+    req = org.approve_all(org.submit(org.engineer, org.office, 1000))
+    org.approve_all(org.submit(org.engineer, org.office, 500))
+    org.record_invoice(org.clerk, req, "INV-9", "1100", override_reason="Warranty upgrade agreed by email")
+
+    sign_in(client, org.fin_head)
+    body = client.get("/api/finance/queue", params={"state": "differences"}).json()
+    assert [it["ref"] for it in body["items"]] == [req.ref]
+    assert body["items"][0]["finance"]["next_step"]["label"] == "Awaiting amendment from Leo Park"
+    assert body["totals"]["differences"] == {"count": 1, "usd": 100.0}
+
+    sign_in(client, org.engineer)
+    assert [it["ref"] for it in client.get("/api/dashboard").json()["attention"]] == [req.ref]

@@ -65,6 +65,27 @@ export interface Persona {
   blurb: string;
 }
 
+/** Invoiced spend above the approval, while it's still open. */
+export interface Excess {
+  over_usd: number;
+  invoiced_usd: number;
+  approved_usd: number;
+  currency: string;
+  /** In the approved currency, when every invoice is in it. */
+  over_amount: number | null;
+  invoiced_amount: number | null;
+  approved_amount: number | null;
+  invoice_id: number;
+  invoice_number: string;
+  note: string | null;
+}
+
+export interface NextStep {
+  kind: "requester" | "approval" | "finance" | "corrected_invoice";
+  owner: UserBrief | null;
+  label: string;
+}
+
 export interface FinanceState {
   state: FinanceStateName;
   invoiced_usd: number;
@@ -72,6 +93,20 @@ export interface FinanceState {
   remaining_usd: number;
   invoice_count: number;
   over_approval: boolean;
+  excess: Excess | null;
+  next_step: NextStep | null;
+}
+
+/** A change to an approved request that is waiting for approval. */
+export interface PendingChange {
+  approved_total_amount: number;
+  approved_currency: string;
+  approved_total_usd: number;
+  requested_total_amount: number;
+  requested_currency: string;
+  requested_total_usd: number;
+  change_pct: number | null;
+  reason: string | null;
 }
 
 export interface RequestSummary {
@@ -98,6 +133,7 @@ export interface RequestSummary {
   has_quote: boolean;
   no_quote_reason: string | null;
   amendment_in_progress: boolean;
+  change: PendingChange | null;
   waiting_for: UserBrief | null;
   waiting_reasons: string[];
   waiting_since: string | null;
@@ -169,7 +205,7 @@ export interface Invoice {
   currency: string;
   amount: number;
   amount_usd: number;
-  status: "received" | "paid";
+  status: "received" | "queried" | "paid" | "void";
   exceeds_approval: boolean;
   override_reason: string | null;
   notes: string | null;
@@ -178,6 +214,14 @@ export interface Invoice {
   paid_by: UserBrief | null;
   paid_on: string | null;
   payment_reference: string | null;
+  query_reason: string | null;
+  queried_by: UserBrief | null;
+  queried_at: string | null;
+  query_resolution: string | null;
+  replaces_invoice_number: string | null;
+  void_reason: string | null;
+  voided_by: UserBrief | null;
+  voided_at: string | null;
   attachments: { id: number; filename: string; size_bytes: number }[];
 }
 
@@ -278,6 +322,8 @@ export interface DashboardNumbers {
 
 export interface Dashboard {
   waiting: RequestSummary[];
+  /** Invoice differences where you own the next step. */
+  attention: RequestSummary[];
   mine: RequestSummary[];
   numbers: DashboardNumbers;
 }

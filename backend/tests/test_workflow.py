@@ -8,6 +8,7 @@ from app import workflow
 from app.audit import SYSTEM
 from app.errors import DomainError, NotAllowed
 from app.models import RequestStatus, StepStatus
+from app.serializers import request_summary
 
 
 def test_submitting_needs_a_quote_or_a_reason_for_not_having_one(org, db):
@@ -130,6 +131,17 @@ def test_change_above_tolerance_needs_approval_while_the_original_approval_stays
     assert approved.total_usd == Decimal("1200.00")
     assert approved.approved_total_usd == Decimal("1000.00")
     assert approved.approved_revision == 1
+
+
+def test_a_change_waiting_for_approval_shows_the_approved_and_requested_totals(org, db, approved):
+    workflow.amend(db, org.engineer, approved, {"currency": "AED", "amount": Decimal("4400")}, "Supplier now bills in dirhams", SYSTEM)
+
+    change = request_summary(approved)["change"]
+
+    assert (change["approved_total_amount"], change["approved_currency"]) == (1000.0, "USD")
+    assert (change["requested_total_amount"], change["requested_currency"]) == (4400.0, "AED")
+    assert change["change_pct"] == 19.8  # USD 1,198.12
+    assert change["reason"] == "Supplier now bills in dirhams"
 
 
 def test_rejecting_a_change_restores_the_approved_request(org, db, approved):

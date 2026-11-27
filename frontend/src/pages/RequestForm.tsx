@@ -1,13 +1,14 @@
 import clsx from "clsx";
-import { Camera, Check, FileText, Info, Lock, Plus, Send, Trash2, UserRound } from "lucide-react";
+import { Camera, Check, CircleAlert, FileText, Info, Lock, Plus, Send, Trash2, UserRound } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { api } from "../api/client";
 import { useAction, useLookups, useMe, useRequest } from "../api/hooks";
 import type { Lookups, RequestDetail, RoutePreview } from "../api/types";
 import { Button, Card, CardHeader, ErrorNote, Field, Input, Modal, PageHeader, PageLoader, Segmented, Select, Textarea, Toggle } from "../components/ui";
-import { bytes, GROUP, money, usd } from "../lib/format";
+import { bytes, GROUP, money, overApproval, usd } from "../lib/format";
 import { BackButton } from "./RequestDetail";
 
 interface FormState {
@@ -459,12 +460,24 @@ export function AmendForm() {
   return <AmendEditor key={`${r.ref}-${r.revision}`} r={r} lookups={lookups} canCreateProject={me.capabilities.can_create_projects} />;
 }
 
+/** Opened from an invoice difference: start from what was invoiced, so the requester only has to check it. */
+function fromInvoice(r: RequestDetail) {
+  const e = r.finance?.excess;
+  if (!e || e.invoiced_amount === null || e.currency !== r.currency) return null;
+  const amount = r.payment_type === "one_off" ? String(e.invoiced_amount) : null;
+  const reason = `Invoice ${e.invoice_number} came to ${money(e.invoiced_amount, e.currency)}, ${overApproval(e).replace(" over approval", "")} more than approved.${e.note ? ` ${e.note}` : ""}`;
+  return { excess: e, amount, reason };
+}
+
 function AmendEditor({ r, lookups, canCreateProject }: { r: RequestDetail; lookups: Lookups; canCreateProject: boolean }) {
-  const [form, setForm] = useState<FormState>(() => fromRequest(r));
-  const [reason, setReason] = useState("");
+  const [params] = useSearchParams();
+  const [invoice] = useState(() => (params.get("invoice") ? fromInvoice(r) : null));
+  const [form, setForm] = useState<FormState>(() => ({ ...fromRequest(r), ...(invoice?.amount ? { amount: invoice.amount } : {}) }));
+  const [reason, setReason] = useState(invoice?.reason ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
   const { preview, loading } = useRoutePreview(form);
 
@@ -488,6 +501,8 @@ function AmendEditor({ r, lookups, canCreateProject }: { r: RequestDetail; looku
         is_confidential: p.is_confidential,
       });
       toast.success(result.amendment?.needs_reapproval ? "Sent for approval. The original approval stands until then." : "Change recorded. Finance has been told.", { description: result.amendment?.explanation });
+      qc.setQueryData(["request", r.ref], result);
+      for (const key of [["dashboard"], ["requests"], ["finance"], ["me"], ["notifications"]]) qc.invalidateQueries({ queryKey: key });
       navigate(`/requests/${r.ref}`, { replace: true });
     } catch (e) {
       toast.error((e as Error).message);
@@ -500,7 +515,16 @@ function AmendEditor({ r, lookups, canCreateProject }: { r: RequestDetail; looku
   return (
     <div>
       <BackButton />
-      <PageHeader title="Change an approved request" subtitle={`${r.ref} · ${r.title} · approved for ${money(r.approved_total_amount, r.currency)}`} />
+      <PageHeader title={invoice ? "Submit the revised total" : "Change an approved request"} subtitle={`${r.ref} · ${r.title} · approved for ${money(r.approved_total_amount, r.currency)}`} />
+      {invoice && (
+        <div className="mb-3 flex gap-3 rounded-2xl bg-rose-50 px-4 py-3 text-[13px] leading-relaxed text-rose-950 ring-1 ring-inset ring-rose-200">
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-rose-600" />
+          <span>
+            Invoice {invoice.excess.invoice_number} is {overApproval(invoice.excess)}.{" "}
+            {invoice.amount ? "The total below is what was invoiced and the reason uses Finance's note. Check both, then submit." : "Update the amount to cover what was invoiced, then submit."} If the supplier billed it wrongly, go back and tell Finance in the comments instead.
+          </span>
+        </div>
+      )}
       <div className="mb-5 flex gap-3 rounded-2xl bg-sky-50 px-4 py-3 text-[13px] leading-relaxed text-sky-900 ring-1 ring-inset ring-sky-200">
         <Info className="mt-0.5 size-4 shrink-0" />
         <span>

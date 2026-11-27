@@ -812,15 +812,25 @@ class Seeder:
         # A laptop order where the invoice came in above the approval.
         h = self.request("leo", "Laptops for three new engineers", "IT hardware", "Dell Technologies", Decimal("7200"), "USD", days_ago(24, 10))
         t = self.approve_all(h, days_ago(24, 10), fast=True)
-        self.invoice(h, days_ago(3, 12), amount=Decimal("7950"), override="Daniel agreed the 3-year warranty upgrade with the supplier by email; approved spend will be amended.", number="DELL-AE-558120")
+        self.invoice(h, days_ago(3, 12), amount=Decimal("7950"), override="Dell added a 3-year ProSupport warranty that Daniel agreed with them by email. It wasn't in the approved quote.", number="DELL-AE-558120")
+
+        # A supplier billing error: Finance queries it and waits for a corrected invoice.
+        h = self.request("yaw", "Forklift service and parts (Accra)", "Site equipment & maintenance", "Mantrac Ghana", Decimal("52000"), "GHS", days_ago(13, 9), description="6,000-hour service on the Cat forklift, with filters and hydraulic hoses.")
+        self.approve_all(h, days_ago(13, 9))
+        self.invoice(h, days_ago(2, 11), amount=Decimal("61400"), override="GHS 9,400 above the approval. The filter kit appears twice (lines 4 and 9).", number="MG-24117")
+        self.later(
+            h,
+            days_ago(1, 10),
+            lambda r: workflow.query_invoice(self.db, u["sara"], r.invoices[-1], "Filter kit billed twice (lines 4 and 9). Asked Mantrac for a corrected invoice.", CLIENT),
+        )
 
         # Withdrawn by the requester.
         h = self.request("analyst", "Market data subscription", "Software & subscriptions", "S&P Global", Decimal("9600"), "USD", days_ago(9, 10))
         self.later(h, days_ago(8, 15), lambda r: workflow.withdraw(self.db, r.requester, r, CLIENT) if r.status == RequestStatus.PENDING else None)
 
-        # Hannah is on leave this week; Marco covers her approvals (but not his own requests).
+        # Hannah is on leave for two weeks; Marco covers her approvals (but not his own requests).
         def cover() -> None:
-            workflow.create_delegation(self.db, u["hannah"], u["hannah"], u["marco"], today - timedelta(days=1), today + timedelta(days=4), "Annual leave. Marco covers Commercial approvals", CLIENT)
+            workflow.create_delegation(self.db, u["hannah"], u["hannah"], u["marco"], today - timedelta(days=1), today + timedelta(days=13), "Annual leave. Marco covers Commercial approvals", CLIENT)
 
         self.at(days_ago(2, 17), cover)
         self.request("lisa", "Mining Indaba stand design and build", "Marketing & events", "Expo Concepts SA", Decimal("9800"), "USD", hours_ago(5), project="TRP-INDABA27", description="Design, build and freight for our 3x6m stand.")
@@ -891,18 +901,19 @@ class Seeder:
         self.db.commit()
 
     def personas(self) -> None:
+        # Blurbs describe rules, not current state: reviewers share one demo, so anything "waiting" may already be done.
         p = [
-            ("nadia", "COO. Approves big spend and all IT", "Start here. Several requests are waiting for you, including Priya's, which needs you only once even though you're both her manager and COO. Also see the whole picture, and your cover for December."),
-            ("tom", "Head of Finance. Sees everything approved, owns the rules", "Track approved, invoiced and paid spend. Change limits, categories and exchange rates without a developer. Export for the auditors."),
-            ("priya", "Head of People & Culture, reports to Nadia", "Raise a request and watch it reach Nadia once, not twice."),
-            ("marco", "Business Development Manager, covering for Hannah", "Hannah is on leave, so her approvals come to Marco. His own Mining Indaba requests still go to her."),
+            ("nadia", "COO. Approves big spend and all IT", "Start here. See why each request needs your approval, and the whole picture across the group."),
+            ("tom", "Head of Finance. Sees everything approved, owns the rules", "Track approved, invoiced and paid spend, and see who owns the next step when an invoice is above its approval. Change limits, categories and exchange rates without a developer."),
+            ("priya", "Head of People & Culture, reports to Nadia", "Start an IT request: \u201cWho will approve\u201d shows Nadia once, as both your manager and COO."),
+            ("marco", "Business Development Manager, covering for Hannah", "While Hannah is on leave her approvals come to Marco. His own requests still go to her, never to himself."),
             ("daniel", "Technology Lead and Accord administrator", "Approves his team's requests. Manages people, managers and roles, including leavers."),
-            ("kwame", "Site Manager, Accra", "Approves his site team's spend in Ghana cedi. One request is waiting for him."),
-            ("ama", "Procurement Officer, Accra", "Raises site purchases in local currency. One was sent back asking for a quote."),
-            ("leo", "Systems Engineer", "Raises software and hardware requests. All IT goes to Nadia after Daniel."),
-            ("sara", "Accounts Payable Lead", "Records invoices against approvals and releases payments. Can't pay her own requests."),
-            ("hannah", "Head of Commercial (on leave)", "Sees all Commercial spend. On leave this week, so Marco is covering."),
-            ("omar", "CEO", "Approves Nadia's own requests, and is her stand-in for December."),
+            ("kwame", "Site Manager, Accra", "Approves his site team's spend in Ghana cedi, with the US dollar equivalent alongside."),
+            ("ama", "Procurement Officer, Accra", "Raises site purchases in local currency. Approvers can send a request back for changes instead of rejecting it."),
+            ("leo", "Systems Engineer", "Raises software and hardware requests. All IT goes to Nadia after Daniel. If an invoice comes in above his approval, Accord asks him to review the difference."),
+            ("sara", "Accounts Payable Lead", "Records invoices against approvals and releases payments. Queries wrong invoices with the supplier. Can't pay her own requests."),
+            ("hannah", "Head of Commercial (on leave)", "Sees all Commercial spend. On leave, so Marco is covering her approvals."),
+            ("omar", "CEO", "Approves Nadia's own requests, and covers her approvals while she travels."),
             ("grace", "Internal Audit Manager (read-only)", "Every request and the tamper-evident audit trail, ready for January."),
         ]
         for i, (key, headline, blurb) in enumerate(p):

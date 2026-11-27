@@ -1,7 +1,7 @@
-import { ArrowRight, CalendarClock, CheckCircle2, Inbox, Plus } from "lucide-react";
+import { ArrowRight, CalendarClock, CheckCircle2, CircleAlert, Inbox, Plus } from "lucide-react";
 import { Link } from "react-router";
 import { useDashboard, useMe } from "../api/hooks";
-import { HBars, QuickDecision, RequestRow, TrendChart } from "../components/requests";
+import { ApprovingAs, HBars, QuickDecision, RequestRow, TrendChart } from "../components/requests";
 import { ButtonLink, Card, CardHeader, Empty, ErrorNote, PageLoader, Stat } from "../components/ui";
 import { useState } from "react";
 import { date, GROUP, plural, usd } from "../lib/format";
@@ -20,6 +20,8 @@ export default function Home() {
   const wide = n.scope !== "self";
   const cover = me.my_cover.find((d) => d.state === "active" || d.state === "scheduled");
   const year = Number(n.period.today.slice(0, 4));
+  const attentionIds = new Set(data.attention.map((r) => r.id));
+  const mine = data.mine.filter((r) => !attentionIds.has(r.id));
 
   return (
     <div className="space-y-5">
@@ -29,7 +31,9 @@ export default function Home() {
           <p className="mt-1 text-[14px] text-zinc-500">
             {data.waiting.length > 0
               ? `${data.waiting.length} request${data.waiting.length > 1 ? "s are" : " is"} waiting for you.`
-              : "Nothing is waiting for you right now."}
+              : data.attention.length > 0
+                ? `${plural(data.attention.length, "invoice difference")} need${data.attention.length === 1 ? "s" : ""} you.`
+                : "Nothing is waiting for you right now."}
           </p>
         </div>
         <div className="hidden sm:block">
@@ -53,9 +57,28 @@ export default function Home() {
             {data.waiting.slice(0, 5).map((r) => (
               <li key={r.id}>
                 <RequestRow r={r} emphasiseWaiting />
+                <ApprovingAs r={r} />
                 <div className="sm:pl-12">
                   <QuickDecision r={r} />
                 </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {data.attention.length > 0 && (
+        <Card padded={false}>
+          <div className="px-4 pb-1 pt-4 sm:px-5">
+            <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+              <CircleAlert className="size-4 text-rose-600" /> Needs your attention
+            </h2>
+            <p className="mt-0.5 text-[12.5px] text-zinc-500">Invoices that don't match what was approved, where you own the next step.</p>
+          </div>
+          <ul className="divide-y divide-zinc-100">
+            {data.attention.map((r) => (
+              <li key={r.id}>
+                <RequestRow r={r} showRequester={r.requester.id !== me.user.id} />
               </li>
             ))}
           </ul>
@@ -146,7 +169,7 @@ export default function Home() {
           </Empty>
         ) : (
           <ul className="divide-y divide-zinc-100">
-            {data.mine.map((r) => (
+            {mine.map((r) => (
               <li key={r.id}>
                 <RequestRow r={r} showRequester={false} />
               </li>

@@ -22,9 +22,9 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api/client";
 import { useAction, useMe, useRequest } from "../api/hooks";
 import type { Change, Invoice, RequestDetail as Detail } from "../api/types";
-import { ApprovalRoute, DecisionDialog, StatusPill } from "../components/requests";
+import { ApprovalRoute, ChangeLine, DecisionDialog, StatusPill } from "../components/requests";
 import { Avatar, Badge, Button, ButtonLink, Card, CardHeader, ErrorNote, Field, Input, KeyValue, Modal, PageLoader, Progress, Textarea } from "../components/ui";
-import { ago, bytes, date, dateTime, GROUP, money, recurringLabel, usd } from "../lib/format";
+import { ago, bytes, date, dateTime, GROUP, money, nextStepText, overApproval, recurringLabel, usd } from "../lib/format";
 import { todayIso } from "../lib/session";
 
 export default function RequestDetail() {
@@ -32,6 +32,7 @@ export default function RequestDetail() {
   const { data: r, isLoading, error } = useRequest(ref);
   const { data: me } = useMe();
   const [decision, setDecision] = useState<"approve" | "reject" | "return" | null>(null);
+  const [invoiceAction, setInvoiceAction] = useState<InvoiceAction | null>(null);
   if (isLoading) return <PageLoader />;
   if (error || !r) return <ErrorNote error={error ?? new Error("Not found")} />;
   const p = r.permissions;
@@ -102,6 +103,8 @@ export default function RequestDetail() {
             {r.description && <p className="mt-4 whitespace-pre-line text-[14.5px] leading-relaxed text-zinc-700">{r.description}</p>}
           </Card>
 
+          {r.finance?.next_step && <InvoiceDifferenceCard r={r} meId={me?.user.id} onAction={setInvoiceAction} />}
+
           {pendingAmendment && <AmendmentCard r={r} changes={pendingAmendment.changes} reason={pendingAmendment.reason} />}
 
           <Card>
@@ -112,7 +115,7 @@ export default function RequestDetail() {
 
           <Documents r={r} />
 
-          {r.approved_total_usd !== null && <FinancePanel r={r} />}
+          {r.approved_total_usd !== null && <FinancePanel r={r} onAction={setInvoiceAction} />}
 
           <Comments r={r} />
         </div>
@@ -154,9 +157,15 @@ export default function RequestDetail() {
         </div>
       )}
       <DecisionDialog request={r} decision={decision} onClose={() => setDecision(null)} />
+      {invoiceAction?.kind === "record" && <InvoiceModal r={r} onClose={() => setInvoiceAction(null)} />}
+      {invoiceAction?.kind === "replace" && <InvoiceModal r={r} replaces={invoiceAction.invoice} onClose={() => setInvoiceAction(null)} />}
+      {invoiceAction?.kind === "pay" && <PayModal r={r} invoice={invoiceAction.invoice} onClose={() => setInvoiceAction(null)} />}
+      {(invoiceAction?.kind === "query" || invoiceAction?.kind === "accept") && <InvoiceNoteModal r={r} kind={invoiceAction.kind} invoice={invoiceAction.invoice} onClose={() => setInvoiceAction(null)} />}
     </div>
   );
 }
+
+type InvoiceAction = { kind: "record" } | { kind: "pay" | "query" | "accept" | "replace"; invoice: Invoice };
 
 export function BackButton({ fallback = "/requests" }: { fallback?: string }) {
   const navigate = useNavigate();
@@ -199,12 +208,96 @@ function AmendmentCard({ r, changes, reason }: { r: Detail; changes: Change[]; r
       <p className="flex items-center gap-2 text-[14px] font-semibold text-amber-900">
         <History className="size-4" /> A change to this approved request needs approval
       </p>
+      {r.change && <ChangeLine change={r.change} className="mt-2" />}
       <p className="mt-1 text-[13px] text-amber-900/80">
-        Still approved for {money(r.approved_total_amount, r.currency)} until the change is decided. Reason: “{reason}”
+        Still approved for {money(r.approved_total_amount, r.change?.approved_currency ?? r.currency)} until the change is decided. Reason: “{reason}”
       </p>
       <div className="mt-3 rounded-xl bg-white/80 p-3">
         <ChangeList changes={changes} />
       </div>
+    </div>
+  );
+}
+
+/** An invoice above the approval (or queried with the supplier): the difference, who owns the next step, and the action. */
+function InvoiceDifferenceCard({ r, meId, onAction }: { r: Detail; meId?: number; onAction: (a: InvoiceAction) => void }) {
+  const f = r.finance!;
+  const step = f.next_step!;
+  const e = f.excess;
+  const queried = r.invoices.find((i) => i.status === "queried");
+  const flagged = e ? r.invoices.find((i) => i.id === e.invoice_id) : undefined;
+  const invoice = queried ?? flagged;
+  const approvers = r.steps.filter((s) => s.revision === r.approved_revision && s.status === "approved").map((s) => (s.acted_by ?? s.approver).name);
+  const isFinance = r.permissions.can_record_invoice;
+  return (
+    <div className="rounded-2xl bg-rose-50/60 p-4 ring-1 ring-inset ring-rose-200 sm:p-5">
+      <p className="flex items-center gap-2 text-[14px] font-semibold text-rose-900">
+        <CircleAlert className="size-4 shrink-0" />
+        {e ? `Invoiced ${overApproval(e)}` : `Invoice ${queried?.invoice_number} is queried with the supplier`}
+      </p>
+      <dl className="mt-3 grid gap-x-4 gap-y-2.5 rounded-xl bg-white/80 p-3 text-[13px] sm:grid-cols-2">
+        <div>
+          <dt className="text-zinc-500">Original approval</dt>
+          <dd className="font-semibold tabular text-zinc-900">{money(e?.approved_amount ?? r.approved_total_amount, e?.currency ?? r.change?.approved_currency ?? r.currency)}</dd>
+          {approvers.length > 0 && <dd className="text-[12px] text-zinc-500">Approved by {approvers.join(" and ")}{r.approved_at && `, ${date(r.approved_at, true)}`}</dd>}
+        </div>
+        <div>
+          <dt className="text-zinc-500">Invoiced</dt>
+          <dd className="font-semibold tabular text-zinc-900">{e && e.invoiced_amount !== null ? money(e.invoiced_amount, e.currency) : usd(f.invoiced_usd)}</dd>
+          {invoice && (
+            <dd className="text-[12px] text-zinc-500">
+              {invoice.invoice_number}, {date(invoice.invoice_date, true)}
+              {invoice.attachments.map((a) => (
+                <a key={a.id} href={`/api/attachments/${a.id}`} target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-0.5 font-medium text-brand-700">
+                  <Paperclip className="size-3" /> Invoice PDF
+                </a>
+              ))}
+            </dd>
+          )}
+        </div>
+      </dl>
+      {e?.note && (
+        <p className="mt-3 text-[13px] leading-relaxed text-zinc-800">
+          <span className="font-medium text-zinc-500">Finance{flagged?.received_by ? ` (${flagged.received_by.name})` : ""}:</span> “{e.note}”
+        </p>
+      )}
+      {queried?.query_reason && (
+        <p className="mt-2 text-[13px] leading-relaxed text-zinc-800">
+          <span className="font-medium text-zinc-500">Queried by {queried.queried_by?.name ?? "Finance"} {ago(queried.queried_at)}:</span> “{queried.query_reason}”
+        </p>
+      )}
+      <div className="mt-3 flex items-center gap-2.5 border-t border-rose-200/70 pt-3">
+        {step.owner && <Avatar name={step.owner.name} initials={step.owner.initials} size="sm" />}
+        <div className="min-w-0">
+          <p className="text-[11.5px] font-semibold uppercase tracking-wide text-rose-800/80">Next step</p>
+          <p className="text-[13.5px] font-semibold text-zinc-900">{nextStepText(step, meId)}</p>
+        </div>
+      </div>
+      {step.kind === "requester" && r.permissions.can_amend && (
+        <div className="mt-3">
+          <ButtonLink to={`/requests/${r.ref}/change?invoice=1`} variant="primary" icon={<History className="size-4" />}>
+            Submit the revised total
+          </ButtonLink>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-zinc-600">If the higher amount is right, send it for approval. If the supplier billed it wrongly, say so in the comments below and Finance will query it.</p>
+        </div>
+      )}
+      {isFinance && invoice && invoice.status !== "paid" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {invoice.status === "received" && (
+            <Button size="sm" onClick={() => onAction({ kind: "query", invoice })}>
+              Query with supplier
+            </Button>
+          )}
+          {invoice.status === "queried" && (
+            <Button size="sm" onClick={() => onAction({ kind: "accept", invoice })}>
+              Accept as billed
+            </Button>
+          )}
+          <Button size="sm" onClick={() => onAction({ kind: "replace", invoice })}>
+            Record corrected invoice
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -304,17 +397,16 @@ function Documents({ r }: { r: Detail }) {
   );
 }
 
-function FinancePanel({ r }: { r: Detail }) {
-  const [recording, setRecording] = useState(false);
-  const [paying, setPaying] = useState<Invoice | null>(null);
+function FinancePanel({ r, onAction }: { r: Detail; onAction: (a: InvoiceAction) => void }) {
   const [closing, setClosing] = useState(false);
   const f = r.finance!;
   const approved = r.approved_total_usd ?? 0;
+  const approvedCurrency = r.change?.approved_currency ?? r.currency;
   return (
     <Card>
       <CardHeader
         title="Invoices and payments"
-        subtitle={`Approved ${money(r.approved_total_amount, r.currency)}${r.currency !== "USD" ? ` (≈ ${usd(approved)})` : ""}`}
+        subtitle={`Approved ${money(r.approved_total_amount, approvedCurrency)}${approvedCurrency !== "USD" ? ` (≈ ${usd(approved)})` : ""}`}
         action={
           <div className="flex gap-1.5">
             {r.permissions.can_close && (
@@ -323,7 +415,7 @@ function FinancePanel({ r }: { r: Detail }) {
               </Button>
             )}
             {r.permissions.can_record_invoice && (
-              <Button size="sm" variant="primary" icon={<Receipt className="size-3.5" />} onClick={() => setRecording(true)}>
+              <Button size="sm" variant="primary" icon={<Receipt className="size-3.5" />} onClick={() => onAction({ kind: "record" })}>
                 Record invoice
               </Button>
             )}
@@ -339,74 +431,103 @@ function FinancePanel({ r }: { r: Detail }) {
           <p className="text-zinc-500">Paid</p>
           <p className="text-[16px] font-semibold tabular">{usd(f.paid_usd)}</p>
         </div>
-        <div>
-          <p className="text-zinc-500">Remaining</p>
-          <p className={clsx("text-[16px] font-semibold tabular", f.remaining_usd < 0 && "text-rose-600")}>{usd(f.remaining_usd)}</p>
-        </div>
+        {f.excess ? (
+          <div>
+            <p className="text-rose-700">Over approval</p>
+            <p className="text-[16px] font-semibold tabular text-rose-600">{usd(f.excess.over_usd)}</p>
+            {f.excess.currency !== "USD" && f.excess.over_amount !== null && <p className="text-[12px] tabular text-rose-700/80">{money(f.excess.over_amount, f.excess.currency)}</p>}
+          </div>
+        ) : (
+          <div>
+            <p className="text-zinc-500">Remaining</p>
+            <p className="text-[16px] font-semibold tabular">{usd(Math.max(0, f.remaining_usd))}</p>
+          </div>
+        )}
       </div>
-      <Progress value={f.invoiced_usd} max={approved} over={f.invoiced_usd > approved} className="mt-3" />
+      <Progress value={f.invoiced_usd} max={approved} over={!!f.excess || f.invoiced_usd > approved} className="mt-3" />
       {r.invoices.length > 0 && (
         <ul className="mt-4 divide-y divide-zinc-100">
-          {r.invoices.map((inv) => (
-            <li key={inv.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-[13.5px] font-medium">
-                  {inv.invoice_number} <span className="font-normal text-zinc-500">· {date(inv.invoice_date)}</span>
-                </p>
-                <p className="text-[12px] text-zinc-500">
-                  {inv.status === "paid" ? `Paid ${date(inv.paid_on)}${inv.payment_reference ? ` · ${inv.payment_reference}` : ""} by ${inv.paid_by?.name}` : `Recorded by ${inv.received_by?.name}`}
-                  {inv.attachments.map((a) => (
-                    <a key={a.id} href={`/api/attachments/${a.id}`} target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-0.5 font-medium text-brand-700">
-                      <Paperclip className="size-3" /> PDF
-                    </a>
-                  ))}
-                </p>
-                {inv.exceeds_approval && <p className="mt-1 text-[12px] font-medium text-rose-700">Over the approved amount. Override: {inv.override_reason}</p>}
-              </div>
-              <span className="text-[14px] font-semibold tabular">{money(inv.amount, inv.currency)}</span>
-              {inv.status === "paid" ? (
-                <Badge tone="green">Paid</Badge>
-              ) : r.permissions.can_record_invoice ? (
-                <Button size="sm" onClick={() => setPaying(inv)}>
-                  Mark paid
-                </Button>
-              ) : (
-                <Badge tone="violet">Awaiting payment</Badge>
-              )}
-            </li>
-          ))}
+          {r.invoices.map((inv) => {
+            const isVoid = inv.status === "void";
+            return (
+              <li key={inv.id} className={clsx("flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5", isVoid && "opacity-70")}>
+                <div className="min-w-0 flex-1 basis-full sm:basis-0">
+                  <p className="text-[13.5px] font-medium">
+                    <span className={clsx(isVoid && "line-through decoration-zinc-400")}>{inv.invoice_number}</span> <span className="font-normal text-zinc-500">· {date(inv.invoice_date)}</span>
+                  </p>
+                  <p className="text-[12px] text-zinc-500">
+                    {inv.status === "paid" ? `Paid ${date(inv.paid_on)}${inv.payment_reference ? ` · ${inv.payment_reference}` : ""} by ${inv.paid_by?.name}` : `Recorded by ${inv.received_by?.name}`}
+                    {inv.attachments.map((a) => (
+                      <a key={a.id} href={`/api/attachments/${a.id}`} target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-0.5 font-medium text-brand-700">
+                        <Paperclip className="size-3" /> PDF
+                      </a>
+                    ))}
+                  </p>
+                  {inv.replaces_invoice_number && <p className="mt-1 text-[12px] text-zinc-600">Corrected invoice, replaces {inv.replaces_invoice_number}</p>}
+                  {isVoid && inv.void_reason && <p className="mt-1 text-[12px] text-zinc-600">{inv.void_reason}. Kept for the record, not counted.</p>}
+                  {inv.exceeds_approval && !isVoid && <p className="mt-1 text-[12px] font-medium text-rose-700">Above the approval. Finance's note: {inv.override_reason}</p>}
+                  {inv.status === "queried" && inv.query_reason && <p className="mt-1 text-[12px] font-medium text-amber-800">Queried by {inv.queried_by?.name}: {inv.query_reason}</p>}
+                  {inv.query_resolution && <p className="mt-1 text-[12px] text-zinc-600">Query settled, accepted as billed: {inv.query_resolution}</p>}
+                </div>
+                <span className={clsx("text-[14px] font-semibold tabular max-sm:mr-auto", isVoid && "text-zinc-400 line-through")}>{money(inv.amount, inv.currency)}</span>
+                {inv.status === "paid" ? (
+                  <Badge tone="green">Paid</Badge>
+                ) : isVoid ? (
+                  <Badge tone="zinc">Void</Badge>
+                ) : inv.status === "queried" ? (
+                  <Badge tone="amber">Queried</Badge>
+                ) : r.permissions.can_record_invoice ? (
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="ghost" onClick={() => onAction({ kind: "query", invoice: inv })}>
+                      Query
+                    </Button>
+                    <Button size="sm" onClick={() => onAction({ kind: "pay", invoice: inv })}>
+                      Mark paid
+                    </Button>
+                  </div>
+                ) : (
+                  <Badge tone="violet">Awaiting payment</Badge>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
-      {recording && <InvoiceModal r={r} onClose={() => setRecording(false)} />}
-      {paying && <PayModal r={r} invoice={paying} onClose={() => setPaying(null)} />}
       {closing && <ReasonModal r={r} kind="close" onClose={() => setClosing(false)} />}
     </Card>
   );
 }
 
-function InvoiceModal({ r, onClose }: { r: Detail; onClose: () => void }) {
-  const [form, setForm] = useState(() => ({ invoice_number: "", invoice_date: todayIso(), amount: "", currency: r.currency, supplier: r.supplier ?? "", notes: "", override_reason: "" }));
+function InvoiceModal({ r, replaces, onClose }: { r: Detail; replaces?: Invoice; onClose: () => void }) {
+  const [form, setForm] = useState(() => ({ invoice_number: "", invoice_date: todayIso(), amount: "", currency: replaces?.currency ?? r.currency, supplier: replaces?.supplier ?? r.supplier ?? "", notes: "", override_reason: "" }));
   const [file, setFile] = useState<File | null>(null);
   const [needsOverride, setNeedsOverride] = useState(false);
   const save = useAction(
     () => {
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => v && fd.append(k, v));
+      if (replaces) fd.append("replaces_invoice_id", String(replaces.id));
       if (file) fd.append("file", file);
       return api.post(`/api/requests/${r.ref}/invoices`, fd);
     },
-    { success: "Invoice recorded", invalidate: [["request", r.ref], ["dashboard"], ["requests"]], onSuccess: onClose },
+    { success: replaces ? "Corrected invoice recorded" : "Invoice recorded", invalidate: [["request", r.ref], ["dashboard"], ["requests"], ["finance"]], onSuccess: onClose },
   );
   const onSave = () =>
     save.mutateAsync(undefined).catch((e: { code?: string }) => {
       if (e.code === "exceeds_approval") setNeedsOverride(true);
     });
   return (
-    <Modal open onClose={onClose} title="Record invoice" description={`Against ${r.ref}. The supplier should quote this reference on the invoice.`} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" className="flex-1" loading={save.isPending} onClick={onSave} disabled={!form.invoice_number || !form.amount}>Record invoice</Button></>}>
+    <Modal
+      open
+      onClose={onClose}
+      title={replaces ? "Record corrected invoice" : "Record invoice"}
+      description={replaces ? `Replaces ${replaces.invoice_number} (${money(replaces.amount, replaces.currency)}), which stays on record as void.` : `Against ${r.ref}. The supplier should quote this reference on the invoice.`}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" className="flex-1" loading={save.isPending} onClick={onSave} disabled={!form.invoice_number || !form.amount}>{replaces ? "Record corrected invoice" : "Record invoice"}</Button></>}
+    >
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Invoice number">
-            <Input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} />
+            <Input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })} placeholder={replaces ? replaces.invoice_number : undefined} />
           </Field>
           <Field label="Invoice date">
             <Input type="date" value={form.invoice_date} onChange={(e) => setForm({ ...form, invoice_date: e.target.value })} />
@@ -427,8 +548,8 @@ function InvoiceModal({ r, onClose }: { r: Detail; onClose: () => void }) {
           <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block w-full text-[13px] file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-[13px] file:font-medium" />
         </Field>
         {needsOverride && (
-          <Field label="Override reason" hint="This invoice takes spend above what was approved. Record why you're accepting it, or ask the requester to submit a change instead.">
-            <Textarea value={form.override_reason} onChange={(e) => setForm({ ...form, override_reason: e.target.value })} />
+          <Field label="Note on the difference" hint={`This takes invoiced spend above what was approved. Say what you know about the difference. ${r.requester.name} will be asked to review it and submit the revised total.`}>
+            <Textarea value={form.override_reason} onChange={(e) => setForm({ ...form, override_reason: e.target.value })} placeholder="e.g. Includes a warranty upgrade that wasn't in the approved quote" />
           </Field>
         )}
       </div>
@@ -436,13 +557,51 @@ function InvoiceModal({ r, onClose }: { r: Detail; onClose: () => void }) {
   );
 }
 
+function InvoiceNoteModal({ r, kind, invoice, onClose }: { r: Detail; kind: "query" | "accept"; invoice: Invoice; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const copy =
+    kind === "query"
+      ? {
+          title: `Query invoice ${invoice.invoice_number}`,
+          description: `It can't be paid while it's queried. ${r.requester.name} will see why, and the request shows it's waiting for a corrected invoice.`,
+          label: "What's wrong with it?",
+          placeholder: "e.g. Filter kit billed twice (lines 4 and 9). Asked the supplier for a corrected invoice.",
+          button: "Query invoice",
+          success: "Invoice queried",
+          send: () => api.post(`/api/invoices/${invoice.id}/query`, { reason: text }),
+        }
+      : {
+          title: `Accept invoice ${invoice.invoice_number} as billed`,
+          description: invoice.exceeds_approval ? `It's above the approval, so ${r.requester.name} will be asked to review the difference and submit the revised total.` : "The invoice can then be paid.",
+          label: "How was the query settled?",
+          placeholder: "e.g. Supplier confirmed both lines are separate kits",
+          button: "Accept as billed",
+          success: "Invoice accepted",
+          send: () => api.post(`/api/invoices/${invoice.id}/accept`, { note: text }),
+        };
+  const run = useAction(copy.send, { success: copy.success, invalidate: [["request", r.ref], ["dashboard"], ["requests"], ["finance"]], onSuccess: onClose });
+  return (
+    <Modal open onClose={onClose} title={copy.title} description={copy.description} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" className="flex-1" loading={run.isPending} disabled={!text.trim()} onClick={() => run.mutate(undefined)}>{copy.button}</Button></>}>
+      <Field label={copy.label}>
+        <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={copy.placeholder} />
+      </Field>
+    </Modal>
+  );
+}
+
 function PayModal({ r, invoice, onClose }: { r: Detail; invoice: Invoice; onClose: () => void }) {
   const [paidOn, setPaidOn] = useState(todayIso);
   const [reference, setReference] = useState("");
-  const pay = useAction(() => api.post(`/api/invoices/${invoice.id}/pay`, { paid_on: paidOn, reference: reference || null }), { success: "Marked as paid", invalidate: [["request", r.ref], ["dashboard"], ["requests"]], onSuccess: onClose });
+  const pay = useAction(() => api.post(`/api/invoices/${invoice.id}/pay`, { paid_on: paidOn, reference: reference || null }), { success: "Marked as paid", invalidate: [["request", r.ref], ["dashboard"], ["requests"], ["finance"]], onSuccess: onClose });
+  const f = r.finance;
   return (
     <Modal open onClose={onClose} title={`Pay invoice ${invoice.invoice_number}`} description={`${money(invoice.amount, invoice.currency)} to ${invoice.supplier ?? r.supplier}`} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" className="flex-1" loading={pay.isPending} onClick={() => pay.mutate(undefined)}>Mark as paid</Button></>}>
       <div className="space-y-3">
+        {f?.excess && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-[13px] leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-200">
+            Invoices on this request are {overApproval(f.excess)}. {f.next_step && <>{f.next_step.label}. </>}Paying doesn't resolve it: the difference stays open until a revised total is approved or a corrected invoice is recorded.
+          </p>
+        )}
         <Field label="Paid on">
           <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
         </Field>

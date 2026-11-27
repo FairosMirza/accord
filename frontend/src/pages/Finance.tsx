@@ -5,11 +5,18 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { api, qs } from "../api/client";
 import type { RequestSummary } from "../api/types";
-import { StatusPill } from "../components/requests";
+import { NextStepLine, StatusPill } from "../components/requests";
 import { Avatar, Card, Empty, ErrorNote, Input, PageHeader, PageLoader, Segmented } from "../components/ui";
 import { date, money, usd } from "../lib/format";
 
-type State = "awaiting_invoice" | "awaiting_payment" | "paid" | "all";
+type State = "awaiting_invoice" | "awaiting_payment" | "differences" | "paid" | "all";
+
+const CARDS = {
+  awaiting_invoice: { label: "Approved, no invoice", value: "USD" },
+  awaiting_payment: { label: "Invoiced, not paid", value: "USD" },
+  differences: { label: "Invoice differences", value: "over approval" },
+  paid: { label: "Paid", value: "USD" },
+} as const;
 
 export default function Finance() {
   const [state, setState] = useState<State>("awaiting_payment");
@@ -32,26 +39,32 @@ export default function Finance() {
           </a>
         }
       />
-      <div className="mb-4 grid grid-cols-3 gap-3">
-        {(["awaiting_invoice", "awaiting_payment", "paid"] as const).map((k) => (
-          <button key={k} type="button" onClick={() => setState(k)} className={clsx("rounded-2xl bg-white p-3.5 text-left shadow-card ring-1 transition sm:p-4", state === k ? "ring-2 ring-brand-500" : "ring-zinc-900/[0.06] hover:ring-zinc-300")}>
-            <p className="text-[12px] font-medium text-zinc-500">{{ awaiting_invoice: "Approved, no invoice", awaiting_payment: "Invoiced, not paid", paid: "Paid" }[k]}</p>
-            <p className="mt-1 text-[19px] font-semibold tabular tracking-tight sm:text-[22px]">{t ? usd(t[k].usd, t[k].usd > 999999) : "–"}</p>
-            <p className="text-[12px] text-zinc-500">{t ? `${t[k].count} requests` : ""}</p>
-          </button>
-        ))}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {(["awaiting_invoice", "awaiting_payment", "differences", "paid"] as const).map((k) => {
+          const flagged = k === "differences" && !!t?.[k].count;
+          return (
+            <button key={k} type="button" onClick={() => setState(k)} className={clsx("rounded-2xl bg-white p-3.5 text-left shadow-card ring-1 transition sm:p-4", state === k ? "ring-2 ring-brand-500" : flagged ? "ring-rose-200 hover:ring-rose-300" : "ring-zinc-900/[0.06] hover:ring-zinc-300")}>
+              <p className={clsx("text-[12px] font-medium", flagged ? "text-rose-700" : "text-zinc-500")}>{CARDS[k].label}</p>
+              <p className={clsx("mt-1 text-[19px] font-semibold tabular tracking-tight sm:text-[22px]", flagged && "text-rose-700")}>{t ? usd(t[k].usd, t[k].usd > 999999) : "–"}</p>
+              <p className="text-[12px] text-zinc-500">{t ? (k === "differences" ? (t[k].count ? `${t[k].count} to resolve · ${CARDS[k].value}` : "None open") : `${t[k].count} requests`) : ""}</p>
+            </button>
+          );
+        })}
       </div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Segmented
-          value={state}
-          onChange={setState}
-          options={[
-            { value: "awaiting_invoice", label: "No invoice" },
-            { value: "awaiting_payment", label: "To pay" },
-            { value: "paid", label: "Paid" },
-            { value: "all", label: "All" },
-          ]}
-        />
+        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <Segmented
+            value={state}
+            onChange={setState}
+            options={[
+              { value: "awaiting_invoice", label: "No invoice" },
+              { value: "awaiting_payment", label: "To pay" },
+              { value: "differences", label: "Differences", count: t?.differences.count || undefined },
+              { value: "paid", label: "Paid" },
+              { value: "all", label: "All" },
+            ]}
+          />
+        </div>
         <form className="relative flex-1" onSubmit={(e) => { e.preventDefault(); setSearch(q); }}>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} onBlur={() => setSearch(q)} placeholder="Search by AC number, supplier or title" className="pl-9" />
@@ -83,6 +96,7 @@ export default function Finance() {
                       <p className="truncate text-[12px] text-zinc-500">
                         <span className="tabular">{r.ref}</span> · {r.supplier} · approved {date(r.approved_at, true)}
                       </p>
+                      {r.finance?.next_step && <NextStepLine finance={r.finance} className="mt-1" />}
                     </div>
                   </div>
                   <div className="text-right md:contents">
@@ -95,7 +109,6 @@ export default function Finance() {
                   </div>
                   <div className="col-span-2 md:col-span-1">
                     <StatusPill r={r} />
-                    {r.finance?.over_approval && <span className="ml-1.5 text-[12px] font-medium text-rose-600">Over approval</span>}
                   </div>
                 </Link>
               ))}

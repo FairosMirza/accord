@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import audit, workflow
@@ -19,6 +19,7 @@ from app.db import get_db
 from app.directory import Directory
 from app.errors import DomainError, NotAllowed
 from app.fx import supported_currencies
+from app.invoicing import next_step
 from app.models import (
     POSITION_ROLES,
     ApprovalStep,
@@ -27,6 +28,8 @@ from app.models import (
     Delegation,
     Department,
     FxRate,
+    Invoice,
+    InvoiceStatus,
     Notification,
     Project,
     RequestStatus,
@@ -94,9 +97,37 @@ def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db))
     ).scalars()
     return {
         "waiting": [request_summary(r) for r in waiting],
+        "attention": attention_for(db, user),
         "mine": [request_summary(r) for r in mine],
         "numbers": dashboard_numbers(db, user),
     }
+
+
+def attention_for(db: Session, user: User) -> list[dict]:
+    """Invoice differences where this person owns the next step (approvals already appear in "waiting")."""
+    flagged = and_(Invoice.status != InvoiceStatus.VOID, Invoice.exceeds_approval.is_(True))
+    handled_by_me = select(Invoice.request_id).where(
+        or_(and_(flagged, Invoice.received_by_id == user.id), and_(Invoice.status == InvoiceStatus.QUERIED, Invoice.queried_by_id == user.id))
+    )
+    rows = db.execute(
+        select(SpendRequest)
+        .where(
+            visibility_clause(db, user),
+            SpendRequest.status.in_((RequestStatus.APPROVED, RequestStatus.PENDING)),
+            or_(
+                and_(SpendRequest.requester_id == user.id, SpendRequest.id.in_(select(Invoice.request_id).where(flagged))),
+                SpendRequest.id.in_(handled_by_me),
+            ),
+        )
+        .options(*summary_options())
+        .order_by(SpendRequest.updated_at.desc())
+    ).scalars()
+    out = []
+    for r in rows:
+        step = next_step(r)
+        if step and step.kind != "approval" and step.owner is not None and step.owner.id == user.id:
+            out.append(request_summary(r))
+    return out
 
 
 @router.get("/reports/spend")
@@ -124,7 +155,7 @@ def spend_report(
 
 @router.get("/finance/queue")
 def finance_queue(
-    state: Literal["awaiting_invoice", "awaiting_payment", "paid", "all"] = "all",
+    state: Literal["awaiting_invoice", "awaiting_payment", "differences", "paid", "all"] = "all",
     q: str | None = None,
     user: User = Depends(require_roles(Role.FINANCE, Role.FINANCE_ADMIN, Role.EXECUTIVE, Role.AUDITOR)),
     db: Session = Depends(get_db),
@@ -143,7 +174,7 @@ def finance_queue(
         like = f"%{q.strip().lower()}%"
         stmt = stmt.where(or_(func.lower(SpendRequest.title).like(like), func.lower(SpendRequest.ref).like(like), func.lower(SpendRequest.supplier).like(like)))
     items = [request_summary(r) for r in db.execute(stmt).scalars()]
-    totals = {k: {"count": 0, "usd": 0.0} for k in ("awaiting_invoice", "awaiting_payment", "paid")}
+    totals = {k: {"count": 0, "usd": 0.0} for k in ("awaiting_invoice", "awaiting_payment", "differences", "paid")}
     for it in items:
         f = it["finance"]
         if it["status"] == RequestStatus.CLOSED and f["state"] != "awaiting_payment":
@@ -151,8 +182,14 @@ def finance_queue(
         if f["state"] in totals:
             totals[f["state"]]["count"] += 1
             totals[f["state"]]["usd"] += f["remaining_usd"] if f["state"] == "awaiting_invoice" else (f["invoiced_usd"] - f["paid_usd"] if f["state"] == "awaiting_payment" else f["paid_usd"])
-    if state != "all":
+        if f["next_step"]:
+            totals["differences"]["count"] += 1
+            totals["differences"]["usd"] += f["excess"]["over_usd"] if f["excess"] else 0
+    if state == "differences":
+        items = [it for it in items if it["finance"]["next_step"]]
+    elif state != "all":
         items = [it for it in items if it["finance"]["state"] == state]
+    items.sort(key=lambda it: it["finance"]["next_step"] is None)
     return {"items": items, "totals": totals}
 
 
@@ -166,7 +203,7 @@ def finance_export(user: User = Depends(require_roles(Role.FINANCE, Role.FINANCE
     ).scalars()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Reference", "Title", "Status", "Requester", "Department", "Site", "Category", "GL code", "Project / trip", "Supplier", "Currency", "Approved amount", "Approved USD", "Approved at", "Approvals", "Invoiced USD", "Paid USD", "Finance state"])
+    w.writerow(["Reference", "Title", "Status", "Requester", "Department", "Site", "Category", "GL code", "Project / trip", "Supplier", "Currency", "Approved amount", "Approved USD", "Approved at", "Approvals", "Invoiced USD", "Paid USD", "Finance state", "Over approval USD", "Next step"])
     for r in rows:
         f = finance_state(r) or {}
         approvals = "; ".join(
@@ -176,7 +213,7 @@ def finance_export(user: User = Depends(require_roles(Role.FINANCE, Role.FINANCE
             for s in r.steps
             if s.status == StepStatus.APPROVED and s.acted_at
         )
-        w.writerow([r.ref, r.title, r.status, r.requester.name, r.department.name if r.department else "", r.site.name if r.site else "", r.category.name if r.category else "", r.category.gl_code if r.category else "", r.project.name if r.project else "", r.supplier, r.currency, r.approved_total_amount, r.approved_total_usd, r.approved_at.isoformat() if r.approved_at else "", approvals, f.get("invoiced_usd"), f.get("paid_usd"), f.get("state")])
+        w.writerow([r.ref, r.title, r.status, r.requester.name, r.department.name if r.department else "", r.site.name if r.site else "", r.category.name if r.category else "", r.category.gl_code if r.category else "", r.project.name if r.project else "", r.supplier, r.currency, r.approved_total_amount, r.approved_total_usd, r.approved_at.isoformat() if r.approved_at else "", approvals, f.get("invoiced_usd"), f.get("paid_usd"), f.get("state"), (f.get("excess") or {}).get("over_usd", ""), (f.get("next_step") or {}).get("label", "")])
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="accord-approved-spend-{company_today()}.csv"'})
 

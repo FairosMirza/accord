@@ -1,6 +1,6 @@
 import { CheckCircle2 } from "lucide-react";
 import { useMe, useRequests } from "../api/hooks";
-import { QuickDecision, RequestRow } from "../components/requests";
+import { ApprovingAs, QuickDecision, RequestRow } from "../components/requests";
 import { Card, Empty, ErrorNote, PageHeader, PageLoader } from "../components/ui";
 import { usd } from "../lib/format";
 
@@ -29,12 +29,7 @@ export default function Approvals() {
             {items.map((r) => (
               <li key={r.id}>
                 <RequestRow r={r} emphasiseWaiting />
-                <div className="-mt-1 px-4 pb-1 text-[12.5px] text-zinc-500 sm:px-5 sm:pl-[68px]">
-                  {r.waiting_for && r.waiting_for.id !== me?.user.id ? (
-                    <span className="font-medium text-sky-700">Covering for {r.waiting_for.name} · </span>
-                  ) : null}
-                  You're approving as {r.waiting_reasons.join(", ")}
-                </div>
+                <ApprovingAs r={r} />
                 <div className="sm:pl-12">
                   <QuickDecision r={r} />
                 </div>

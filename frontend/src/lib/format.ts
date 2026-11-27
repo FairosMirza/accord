@@ -1,4 +1,4 @@
-import type { FinanceStateName, Group, Status } from "../api/types";
+import type { Excess, FinanceStateName, Group, NextStep, Status } from "../api/types";
 
 export function money(amount: number | string | null | undefined, currency = "USD", opts: { compact?: boolean; cents?: boolean } = {}): string {
   if (amount === null || amount === undefined || amount === "") return "–";
@@ -15,6 +15,27 @@ export function money(amount: number | string | null | undefined, currency = "US
 
 export function usd(amount: number | string | null | undefined, compact = false): string {
   return money(amount, "USD", { compact, cents: false });
+}
+
+/** "$750 over approval", in the approved currency when every invoice is in it. */
+export function overApproval(e: Excess): string {
+  return `${e.over_amount !== null ? money(e.over_amount, e.currency) : usd(e.over_usd)} over approval`;
+}
+
+/** The next step on an invoice difference, worded for whoever is reading it. */
+export function nextStepText(step: NextStep, meId?: number): string {
+  if (!step.owner || step.owner.id !== meId) return step.label;
+  return {
+    requester: "Your next step: review the invoice difference",
+    approval: "Your approval is needed for the revised total",
+    finance: "Your next step: query the invoice with the supplier",
+    corrected_invoice: step.label,
+  }[step.kind];
+}
+
+export function signedPct(n: number): string {
+  const r = Math.round(n);
+  return `${r > 0 ? "+" : ""}${r}%`;
 }
 
 export function plural(n: number, word: string): string {

@@ -107,6 +107,8 @@ def detail_options():
         selectinload(SpendRequest.attachments).selectinload(Attachment.uploaded_by),
         selectinload(SpendRequest.invoices).selectinload(Invoice.received_by),
         selectinload(SpendRequest.invoices).selectinload(Invoice.paid_by),
+        selectinload(SpendRequest.invoices).selectinload(Invoice.queried_by),
+        selectinload(SpendRequest.invoices).selectinload(Invoice.voided_by),
         selectinload(SpendRequest.invoices).selectinload(Invoice.attachments),
         selectinload(SpendRequest.comments),
         selectinload(SpendRequest.policy_version),
@@ -337,6 +339,7 @@ async def record_invoice(
     supplier: str | None = Form(None, max_length=200),
     notes: str | None = Form(None, max_length=2000),
     override_reason: str | None = Form(None, max_length=2000),
+    replaces_invoice_id: int | None = Form(None),
     file: UploadFile | None = File(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -356,17 +359,41 @@ async def record_invoice(
         override_reason=override_reason,
         file=payload,
         client=client_info(request),
+        replaces_invoice_id=replaces_invoice_id,
     )
     db.commit()
     return detail(db, ref, user)
 
 
-@router.post("/invoices/{invoice_id}/pay")
-def pay(invoice_id: int, body: PayBody, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def load_invoice(db: Session, invoice_id: int, user: User) -> Invoice:
     inv = db.get(Invoice, invoice_id)
     if inv is None or not can_view(db, user, inv.request):
         raise HTTPException(404, "Invoice not found.")
+    return inv
+
+
+@router.post("/invoices/{invoice_id}/pay")
+def pay(invoice_id: int, body: PayBody, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    inv = load_invoice(db, invoice_id, user)
     ref = inv.request.ref
     workflow.mark_paid(db, user, inv, body.paid_on, body.reference, client_info(request))
+    db.commit()
+    return detail(db, ref, user)
+
+
+@router.post("/invoices/{invoice_id}/query")
+def query_invoice(invoice_id: int, body: ReasonBody, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    inv = load_invoice(db, invoice_id, user)
+    ref = inv.request.ref
+    workflow.query_invoice(db, user, inv, body.reason, client_info(request))
+    db.commit()
+    return detail(db, ref, user)
+
+
+@router.post("/invoices/{invoice_id}/accept")
+def accept_invoice(invoice_id: int, body: NoteBody, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    inv = load_invoice(db, invoice_id, user)
+    ref = inv.request.ref
+    workflow.accept_invoice(db, user, inv, body.note or "", client_info(request))
     db.commit()
     return detail(db, ref, user)

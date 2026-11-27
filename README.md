@@ -12,13 +12,14 @@ In production there's no persona picker: people sign in with their normal Micros
 
 | Sign in as | To see |
 | --- | --- |
-| **Nadia Frost**, COO | Her approvals inbox (six waiting), the company-wide picture, and her December cover |
-| **Tom Becker**, Head of Finance | Approved, invoiced and paid spend. He owns the approval rules, categories and exchange rates, and can export for the auditors |
-| **Priya Nair**, reports to Nadia | Her IT request reached Nadia **once**, although Nadia is both her manager and the COO |
+| **Nadia Frost**, COO | Her approvals inbox, with why each request needs her (manager, COO, or both), the company-wide picture, and who covers for her while she travels |
+| **Tom Becker**, Head of Finance | Approved, invoiced and paid spend, and who owns the next step when an invoice is above its approval. He owns the approval rules, categories and exchange rates, and can export for the auditors |
+| **Priya Nair**, reports to Nadia | Start an IT request: **Who will approve** shows Nadia **once**, although she's both Priya's manager and the COO |
 | **Marco Silva**, covering for Hannah | Hannah's approvals come to him while she's away. His own requests still go to her |
-| **Thabo Nkosi**, site manager | Quote went up after approval (ZAR 85k → 140k), so the change is back with Nadia while the original approval stands |
-| **Ama Owusu**, site procurement | Raises requests in Ghana cedi. One was sent back asking for a quote |
-| **Sara Lindqvist**, accounts payable | Records invoices and releases payments. She can't pay her own requests |
+| **Thabo Nkosi**, site manager | His generator quote went up after approval (ZAR 85k → 140k). Approvers see both amounts before they decide, and the original approval stands until they do |
+| **Leo Park**, systems engineer | The Dell laptops were approved at $7,200 and invoiced at $7,950. Accord asks him to review the difference and submit the revised total |
+| **Ama Owusu**, site procurement | Raises requests in Ghana cedi. Approvers can send a request back for changes instead of rejecting it |
+| **Sara Lindqvist**, accounts payable | Records invoices and releases payments. She queries wrong invoices with the supplier and records the corrected ones. She can't pay her own requests |
 | **Daniel Reyes**, Technology Lead | Administrator: people, managers, roles, leavers |
 | **Grace Liu**, internal audit | Read-only access to everything, plus the audit log and integrity check |
 
@@ -33,6 +34,7 @@ The **Email outbox** (Settings & records, demo only) shows every email Accord se
 | "Keep it flexible because it will change" | Finance edits the rules in the app, tries them out against an example, and publishes a new version. Requests keep the version that routed them |
 | Priya: "it comes to me, and then it comes to me again?" | The same person never gets two steps. Nobody approves their own request: it goes up to their manager |
 | Tom needs to see what's approved, paid and unpaid | **Finance**: approved with no invoice, invoiced but unpaid, and paid. CSV export |
+| An invoice that doesn't match the approval | **Finance → Invoice differences**: how much over, who owns the next step and what it is. The requester submits the revised total, the approver decides it, or Finance queries the supplier and records a corrected invoice |
 | Attach the quote, but not always (visa fees) | A quote is required unless the requester says why there isn't one. Categories like visas don't need one |
 | What's waiting for me, plus the whole picture | **Home** and **Insights**: by department, category, site, project, supplier and month |
 | Everyone sees their own, heads see theirs, some things are sensitive | Visibility rules below. Confidential requests only show to the people involved |
@@ -45,7 +47,7 @@ The **Email outbox** (Settings & records, demo only) shows every email Accord se
 | Local currency at the sites | Requests in any currency, converted to USD at Finance's rate for limits and reporting |
 | Auditors in January: who approved what and when | Append-only, hash-chained audit log, with an integrity check and CSV export. Each approval is tied to a fingerprint of exactly what was approved |
 | Rejections need a reason | One tap on a reason (Finance's list), plus an optional note |
-| "What if they change it after it's approved?" | **Change amount or details**: within 5% it's recorded and Finance is told. Above that it goes back for approval, and the original approval stands meanwhile |
+| "What if they change it after it's approved?" | **Change amount or details**: within 5% it's recorded and Finance is told. Above that it goes back for approval, and the original approval stands meanwhile. Approvers see "Approved ZAR 85,000 → Requested ZAR 140,000" in their queue |
 | Recurring subscriptions and retainers | Approved once for the whole term and judged on the full contract value. A renewal reminder goes out before it ends |
 | It needs a name | Accord |
 | Reading invoices with AI | Not built yet. Requests carry a reference (AC-1234) that suppliers quote on invoices, which is what makes automatic matching reliable later |
@@ -58,7 +60,8 @@ The full list of assumptions and decisions is in [docs/DECISIONS.md](docs/DECISI
 - **Limits use the full commitment.** A $250/month three-year contract counts as $9,000. Local currency is converted at Finance's rate on the day.
 - **Visibility.** Everyone sees their own requests and anything they approve. Managers see their whole reporting line, and department heads see their department. Executives, Finance, auditors and administrators see everything. Confidential requests are limited to the requester, the approvers and the see-everything roles. Drafts are private.
 - **Separation of duties.** Nobody approves their own request. A stand-in can't approve their own requests, or add a second approval to a request they already approve. Finance can't pay their own requests. Administrators can't approve other people's requests.
-- **After approval.** An approval is locked. Changes create a new version. Small changes are applied and Finance is told. Larger ones, or ones that need a new approver, go back through approval. Invoices above the approved amount (plus tolerance) need an override reason.
+- **After approval.** An approval is locked. Changes create a new version. Small changes are applied and Finance is told. Larger ones, or ones that need a new approver, go back through approval.
+- **Invoices above the approval.** An invoice above the approved amount (plus tolerance) needs a note from Finance, and opens a difference that shows who owns the next step. The requester reviews it and submits the revised total through the same change flow. If the supplier billed wrongly, Finance queries the invoice (it can't be paid meanwhile) and records a corrected one, which replaces it. The original is kept as void. Paying with a difference still open isn't blocked yet: that's a policy question for the COO ([docs/DECISIONS.md](docs/DECISIONS.md#money)).
 
 ## Architecture
 

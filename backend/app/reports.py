@@ -38,6 +38,7 @@ def _invoice_totals():
             func.sum(Invoice.amount_usd).label("invoiced"),
             func.sum(case((Invoice.status == InvoiceStatus.PAID, Invoice.amount_usd), else_=0)).label("paid"),
         )
+        .where(Invoice.status != InvoiceStatus.VOID)
         .group_by(Invoice.request_id)
         .subquery()
     )
@@ -191,7 +192,7 @@ def dashboard_numbers(db: Session, user: User) -> dict[str, Any]:
     awaiting_payment = db.execute(
         select(func.count(Invoice.id), func.coalesce(func.sum(Invoice.amount_usd), 0))
         .join(SpendRequest, SpendRequest.id == Invoice.request_id)
-        .where(visible, Invoice.status == InvoiceStatus.RECEIVED)
+        .where(visible, Invoice.status.in_((InvoiceStatus.RECEIVED, InvoiceStatus.QUERIED)))
     ).one()
 
     trend_from = (today.replace(day=1) - timedelta(days=330)).replace(day=1)
