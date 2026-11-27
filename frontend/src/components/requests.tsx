@@ -55,7 +55,7 @@ export function RequestRow({ r, showRequester = true, emphasiseWaiting }: { r: R
           <Amount r={r} />
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <StatusPill r={r} />
+          {!(emphasiseWaiting && r.status === "pending" && !r.amendment_in_progress) && <StatusPill r={r} />}
           {r.category && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-50 px-2 py-0.5 text-[12px] text-zinc-600 ring-1 ring-inset ring-zinc-200">
               <span className={clsx("size-1.5 rounded-full", GROUP[r.category.group].dot)} />
@@ -281,7 +281,7 @@ export function TrendChart({ data }: { data: { month: string; it: number; travel
   const max = Math.max(1, ...data.map((d) => d.it + d.travel + d.general));
   return (
     <div>
-      <div className="flex h-40 items-end gap-1.5 sm:gap-2.5">
+      <div className="flex h-40 items-end gap-1.5 sm:gap-2.5 lg:h-64">
         {data.map((d) => {
           const total = d.it + d.travel + d.general;
           const label = new Date(`${d.month}-01T12:00:00`).toLocaleDateString("en-GB", { month: "short" });

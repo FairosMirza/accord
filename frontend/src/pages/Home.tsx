@@ -32,9 +32,11 @@ export default function Home() {
               : "Nothing is waiting for you right now."}
           </p>
         </div>
-        <ButtonLink to="/requests/new" variant="primary" icon={<Plus className="size-4" />} className="hidden sm:inline-flex">
-          New request
-        </ButtonLink>
+        <div className="hidden sm:block">
+          <ButtonLink to="/requests/new" variant="primary" icon={<Plus className="size-4" />}>
+            New request
+          </ButtonLink>
+        </div>
       </div>
 
       {data.waiting.length > 0 && (
@@ -81,7 +83,7 @@ export default function Home() {
               <Stat label="This quarter" value={usd(n.committed.quarter_usd, n.committed.quarter_usd > 999999)} />
               <Stat label={`So far in ${year}`} value={usd(n.committed.year_usd, n.committed.year_usd > 999999)} />
               <Stat label="Being approved" value={usd(n.pending.usd, n.pending.usd > 999999)} hint={`${n.pending.count} request${n.pending.count === 1 ? "" : "s"}`} tone={n.pending.count ? "warn" : "default"} />
-              <Stat label="Approved, not yet invoiced" value={usd(n.awaiting_invoice.usd, n.awaiting_invoice.usd > 999999)} hint={`${plural(n.awaiting_invoice.count, "request")} · ${usd(n.awaiting_payment.usd, true)} invoiced, unpaid`} />
+              <Stat label="Approved, not yet invoiced" value={usd(n.awaiting_invoice.usd, n.awaiting_invoice.usd > 999999)} hint={plural(n.awaiting_invoice.count, "request")} />
             </div>
           </Card>
 
